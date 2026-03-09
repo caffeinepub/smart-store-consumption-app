@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "Cabinet Grotesk";
+  src: url("/assets/fonts/CabinetGrotesk-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Satoshi";
+  src: url("/assets/fonts/Satoshi-Variable.woff2") format("woff2");
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    --radius: 0.5rem;
+
+    /* Slate-Teal enterprise palette */
+    --background: 0.975 0.004 240;
+    --foreground: 0.18 0.025 255;
+
+    --card: 1 0 0;
+    --card-foreground: 0.18 0.025 255;
+
+    --popover: 1 0 0;
+    --popover-foreground: 0.18 0.025 255;
+
+    --primary: 0.52 0.14 200;
+    --primary-foreground: 0.99 0 0;
+
+    --secondary: 0.94 0.01 220;
+    --secondary-foreground: 0.25 0.035 240;
+
+    --muted: 0.945 0.008 220;
+    --muted-foreground: 0.52 0.02 240;
+
+    --accent: 0.92 0.025 200;
+    --accent-foreground: 0.3 0.08 200;
+
+    --destructive: 0.577 0.245 27.325;
+    --destructive-foreground: 0.985 0 0;
+
+    --success: 0.55 0.14 145;
+    --success-foreground: 0.99 0 0;
+
+    --warning: 0.72 0.17 65;
+    --warning-foreground: 0.18 0 0;
+
+    --border: 0.88 0.015 240;
+    --input: 0.88 0.015 240;
+    --ring: 0.52 0.14 200;
+
+    --chart-1: 0.52 0.14 200;
+    --chart-2: 0.6 0.118 184.704;
+    --chart-3: 0.65 0.13 150;
+    --chart-4: 0.7 0.16 90;
+    --chart-5: 0.6 0.2 30;
+
+    --sidebar: 0.22 0.03 245;
+    --sidebar-foreground: 0.92 0.01 240;
+    --sidebar-primary: 0.52 0.14 200;
+    --sidebar-primary-foreground: 0.99 0 0;
+    --sidebar-accent: 0.3 0.04 245;
+    --sidebar-accent-foreground: 0.92 0.01 240;
+    --sidebar-border: 0.3 0.03 245;
+    --sidebar-ring: 0.52 0.14 200;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Satoshi", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: "Cabinet Grotesk", system-ui, sans-serif;
+    font-weight: 700;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: "Cabinet Grotesk", system-ui, sans-serif;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: oklch(var(--muted));
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(var(--muted-foreground) / 0.4);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(var(--muted-foreground) / 0.6);
+}
