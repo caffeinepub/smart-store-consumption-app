@@ -20,15 +20,34 @@ export interface ConsumptionItem {
   'quantity' : number,
   'department' : string,
 }
+export interface SavedEntry {
+  'id' : string,
+  'date' : string,
+  'rows' : Array<SavedRow>,
+  'savedAt' : string,
+  'savedBy' : string,
+  'department' : string,
+}
+export interface SavedRow {
+  'qty' : number,
+  'name' : string,
+  'unit' : string,
+  'itemCode' : string,
+  'department' : string,
+}
 export interface _SERVICE {
   'addItem' : ActorMethod<[ConsumptionItem], undefined>,
   'bulkImport' : ActorMethod<[Array<ConsumptionItem>], undefined>,
+  'deleteAllEntries' : ActorMethod<[], undefined>,
+  'deleteEntry' : ActorMethod<[string], undefined>,
   'deleteItem' : ActorMethod<[string, string], undefined>,
+  'getAllEntries' : ActorMethod<[], Array<SavedEntry>>,
   'getAllItems' : ActorMethod<[], Array<ConsumptionItem>>,
   'getItemsByDepartment' : ActorMethod<[string], Array<ConsumptionItem>>,
   'getItemsByMonthYear' : ActorMethod<[number, number], Array<ConsumptionItem>>,
   'getUniqueDepartments' : ActorMethod<[], Array<string>>,
   'resetData' : ActorMethod<[], undefined>,
+  'saveEntry' : ActorMethod<[SavedEntry], undefined>,
   'searchItemsByCode' : ActorMethod<[string], Array<ConsumptionItem>>,
   'searchItemsByName' : ActorMethod<[string], Array<ConsumptionItem>>,
   'updateItemQuantity' : ActorMethod<[string, string, number], undefined>,

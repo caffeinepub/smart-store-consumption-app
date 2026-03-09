@@ -89,6 +89,14 @@ export class ExternalBlob {
         return this;
     }
 }
+export interface SavedEntry {
+    id: string;
+    date: string;
+    rows: Array<SavedRow>;
+    savedAt: string;
+    savedBy: string;
+    department: string;
+}
 export interface ConsumptionItem {
     month: number;
     name: string;
@@ -99,15 +107,26 @@ export interface ConsumptionItem {
     quantity: number;
     department: string;
 }
+export interface SavedRow {
+    qty: number;
+    name: string;
+    unit: string;
+    itemCode: string;
+    department: string;
+}
 export interface backendInterface {
     addItem(item: ConsumptionItem): Promise<void>;
     bulkImport(newItems: Array<ConsumptionItem>): Promise<void>;
+    deleteAllEntries(): Promise<void>;
+    deleteEntry(id: string): Promise<void>;
     deleteItem(name: string, department: string): Promise<void>;
+    getAllEntries(): Promise<Array<SavedEntry>>;
     getAllItems(): Promise<Array<ConsumptionItem>>;
     getItemsByDepartment(department: string): Promise<Array<ConsumptionItem>>;
     getItemsByMonthYear(month: number, year: number): Promise<Array<ConsumptionItem>>;
     getUniqueDepartments(): Promise<Array<string>>;
     resetData(): Promise<void>;
+    saveEntry(entry: SavedEntry): Promise<void>;
     searchItemsByCode(searchTerm: string): Promise<Array<ConsumptionItem>>;
     searchItemsByName(searchTerm: string): Promise<Array<ConsumptionItem>>;
     updateItemQuantity(name: string, department: string, newQuantity: number): Promise<void>;
@@ -142,6 +161,34 @@ export class Backend implements backendInterface {
             return result;
         }
     }
+    async deleteAllEntries(): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.deleteAllEntries();
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.deleteAllEntries();
+            return result;
+        }
+    }
+    async deleteEntry(arg0: string): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.deleteEntry(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.deleteEntry(arg0);
+            return result;
+        }
+    }
     async deleteItem(arg0: string, arg1: string): Promise<void> {
         if (this.processError) {
             try {
@@ -153,6 +200,20 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.deleteItem(arg0, arg1);
+            return result;
+        }
+    }
+    async getAllEntries(): Promise<Array<SavedEntry>> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.getAllEntries();
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.getAllEntries();
             return result;
         }
     }
@@ -223,6 +284,20 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.resetData();
+            return result;
+        }
+    }
+    async saveEntry(arg0: SavedEntry): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.saveEntry(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.saveEntry(arg0);
             return result;
         }
     }

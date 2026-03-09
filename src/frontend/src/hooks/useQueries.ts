@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { ConsumptionItem } from "../backend.d.ts";
+import type { ConsumptionItem, SavedEntry } from "../backend.d.ts";
 import { useActor } from "./useActor";
 
 export function useGetAllItems() {
@@ -164,6 +164,74 @@ export function useResetData() {
     },
     onError: () => {
       toast.error("Failed to reset data");
+    },
+  });
+}
+
+// ---- Entries (Saved Consumption History) ----
+
+export function useGetAllEntries() {
+  const { actor, isFetching } = useActor();
+  return useQuery<SavedEntry[]>({
+    queryKey: ["entries"],
+    queryFn: async () => {
+      if (!actor) return [];
+      return actor.getAllEntries();
+    },
+    enabled: !!actor && !isFetching,
+  });
+}
+
+export function useSaveEntry() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (entry: SavedEntry) => {
+      if (!actor) throw new Error("Actor not available");
+      await actor.saveEntry(entry);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["entries"] });
+      toast.success("Saved!");
+    },
+    onError: () => {
+      toast.error("Save karne mein error aaya");
+    },
+  });
+}
+
+export function useDeleteEntry() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      if (!actor) throw new Error("Actor not available");
+      await actor.deleteEntry(id);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["entries"] });
+      toast.success("Entry delete ho gayi");
+    },
+    onError: () => {
+      toast.error("Delete karne mein error aaya");
+    },
+  });
+}
+
+export function useDeleteAllEntries() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      if (!actor) throw new Error("Actor not available");
+      await actor.deleteAllEntries();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["entries"] });
+      toast.success("Sari entries delete ho gayi");
+    },
+    onError: () => {
+      toast.error("Delete karne mein error aaya");
     },
   });
 }

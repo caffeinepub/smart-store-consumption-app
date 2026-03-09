@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -8,48 +9,32 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Download, Trash2, Users, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Download, Loader2, Trash2, Users, X } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
-import type { SavedEntry } from "./ConsumptionEntryTab";
-
-const LS_KEY = "consumption_history_v1";
-
-function loadHistory(): SavedEntry[] {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveHistoryLS(entries: SavedEntry[]) {
-  localStorage.setItem(LS_KEY, JSON.stringify(entries));
-}
+import type { SavedEntry } from "../backend.d.ts";
+import {
+  useDeleteAllEntries,
+  useDeleteEntry,
+  useGetAllEntries,
+} from "../hooks/useQueries";
 
 export default function WorkerEntriesTab() {
-  const [history, setHistory] = useState<SavedEntry[]>([]);
+  const { data: history = [], isLoading } = useGetAllEntries();
+  const deleteEntry = useDeleteEntry();
+  const deleteAllEntries = useDeleteAllEntries();
+
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  useEffect(() => {
-    setHistory(loadHistory());
-  }, []);
-
-  const handleDelete = (id: string) => {
-    const updated = loadHistory().filter((e) => e.id !== id);
-    saveHistoryLS(updated);
-    setHistory(updated);
+  const handleDelete = async (id: string) => {
+    await deleteEntry.mutateAsync(id);
     setConfirmDeleteId(null);
-    toast.success("Entry delete ho gayi");
   };
 
-  const handleDeleteAll = () => {
-    saveHistoryLS([]);
-    setHistory([]);
+  const handleDeleteAll = async () => {
+    await deleteAllEntries.mutateAsync();
     setConfirmDeleteId(null);
-    toast.success("Sari entries delete ho gayi");
   };
 
   const handleExportEntry = (entry: SavedEntry) => {
@@ -169,7 +154,7 @@ export default function WorkerEntriesTab() {
             variant="outline"
             size="sm"
             onClick={handleExportAll}
-            disabled={history.length === 0}
+            disabled={history.length === 0 || isLoading}
             data-ocid="worker-entries.export_button"
           >
             <Download className="h-3.5 w-3.5 mr-1.5" />
@@ -181,9 +166,14 @@ export default function WorkerEntriesTab() {
               size="sm"
               className="text-destructive hover:text-destructive hover:bg-destructive/10"
               onClick={() => setConfirmDeleteId("__ALL__")}
+              disabled={deleteAllEntries.isPending}
               data-ocid="worker-entries.delete_all_button"
             >
-              <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+              {deleteAllEntries.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+              )}
               Delete All
             </Button>
           )}
@@ -204,8 +194,12 @@ export default function WorkerEntriesTab() {
               size="sm"
               variant="destructive"
               onClick={handleDeleteAll}
+              disabled={deleteAllEntries.isPending}
               data-ocid="worker-entries.confirm_button"
             >
+              {deleteAllEntries.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              ) : null}
               Haan, Delete Karo
             </Button>
             <Button
@@ -220,8 +214,15 @@ export default function WorkerEntriesTab() {
         </div>
       )}
 
-      {/* Empty State */}
-      {history.length === 0 ? (
+      {/* Loading State */}
+      {isLoading ? (
+        <div className="space-y-3" data-ocid="worker-entries.loading_state">
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
+        </div>
+      ) : history.length === 0 ? (
+        /* Empty State */
         <div
           data-ocid="worker-entries.empty_state"
           className="flex flex-col items-center justify-center py-24 text-muted-foreground border border-border rounded-lg bg-card"
@@ -304,8 +305,12 @@ export default function WorkerEntriesTab() {
                           size="sm"
                           variant="destructive"
                           onClick={() => handleDelete(entry.id)}
+                          disabled={deleteEntry.isPending}
                           data-ocid={`worker-entries.confirm_button.${idx + 1}`}
                         >
+                          {deleteEntry.isPending ? (
+                            <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                          ) : null}
                           Haan
                         </Button>
                         <Button

@@ -4,12 +4,13 @@ import Order "mo:core/Order";
 import Text "mo:core/Text";
 import Array "mo:core/Array";
 import Set "mo:core/Set";
-import Runtime "mo:core/Runtime";
 import Iter "mo:core/Iter";
+import Runtime "mo:core/Runtime";
+import Migration "migration";
 
-
-
+(with migration = Migration.run)
 actor {
+  // Consumption Items
   type ConsumptionItem = {
     itemCode : Text;
     name : Text;
@@ -32,58 +33,45 @@ actor {
 
   let items = Map.empty<Text, ConsumptionItem>();
 
+  func makeCompositeKey(name : Text, department : Text) : Text {
+    name.trim(#char(' ')).toLower() # "::" # department.trim(#char(' ')).toLower();
+  };
+
   public shared ({ caller }) func addItem(item : ConsumptionItem) : async () {
-    if (items.containsKey(item.itemCode)) {
-      Runtime.trap("Item with code " # item.itemCode # " already exists");
-    };
-    items.add(item.itemCode, item);
+    let key = makeCompositeKey(item.name, item.department);
+    items.add(key, item); // upsert behavior
   };
 
   public shared ({ caller }) func bulkImport(newItems : [ConsumptionItem]) : async () {
     newItems.forEach(
       func(item) {
-        if (not items.containsKey(item.itemCode)) {
-          items.add(item.itemCode, item);
+        let key = makeCompositeKey(item.name, item.department);
+        if (not items.containsKey(key)) {
+          items.add(key, item);
         };
       }
     );
   };
 
   public shared ({ caller }) func updateItemQuantity(name : Text, department : Text, newQuantity : Float) : async () {
-    let itemOpt = items.values().find(
-      func(item) {
-        item.name == name and item.department == department
-      }
-    );
+    let key = makeCompositeKey(name, department);
+    let itemOpt = items.get(key);
 
     switch (itemOpt) {
-      case (null) {
-        Runtime.trap("Item not found for update");
-      };
+      case (null) { Runtime.trap("Item not found for update") };
       case (?item) {
-        let updatedItem = {
-          item with quantity = newQuantity;
-        };
-        items.add(updatedItem.itemCode, updatedItem);
+        let updatedItem : ConsumptionItem = { item with quantity = newQuantity };
+        items.add(key, updatedItem);
       };
     };
   };
 
   public shared ({ caller }) func deleteItem(name : Text, department : Text) : async () {
-    let itemOpt = items.values().find(
-      func(item) {
-        item.name == name and item.department == department
-      }
-    );
-
-    switch (itemOpt) {
-      case (null) {
-        Runtime.trap("Item not found for deletion");
-      };
-      case (?item) {
-        items.remove(item.itemCode);
-      };
+    let key = makeCompositeKey(name, department);
+    if (not items.containsKey(key)) {
+      Runtime.trap("Item not found for deletion");
     };
+    items.remove(key);
   };
 
   public query ({ caller }) func getAllItems() : async [ConsumptionItem] {
@@ -99,7 +87,10 @@ actor {
   };
 
   public query ({ caller }) func searchItemsByName(searchTerm : Text) : async [ConsumptionItem] {
-    items.values().toArray().filter(func(item) { item.name.contains(#text(searchTerm)) });
+    let lowerTerm = searchTerm.toLower();
+    items.values().toArray().filter(
+      func(item) { item.name.toLower().contains(#text(lowerTerm)) }
+    );
   };
 
   public query ({ caller }) func searchItemsByCode(searchTerm : Text) : async [ConsumptionItem] {
@@ -114,5 +105,48 @@ actor {
 
   public shared ({ caller }) func resetData() : async () {
     items.clear();
+  };
+
+  // Saved Entries
+  type SavedRow = {
+    itemCode : Text;
+    name : Text;
+    unit : Text;
+    qty : Float;
+    department : Text;
+  };
+
+  type SavedEntry = {
+    id : Text;
+    date : Text;
+    savedAt : Text;
+    department : Text;
+    savedBy : Text;
+    rows : [SavedRow];
+  };
+
+  let savedEntries = Map.empty<Text, SavedEntry>();
+
+  func compareEntriesBySavedAtDesc(a : SavedEntry, b : SavedEntry) : Order.Order {
+    Text.compare(b.savedAt, a.savedAt); // reverse - newest first
+  };
+
+  public shared ({ caller }) func saveEntry(entry : SavedEntry) : async () {
+    savedEntries.add(entry.id, entry);
+  };
+
+  public query ({ caller }) func getAllEntries() : async [SavedEntry] {
+    savedEntries.values().toArray().sort(compareEntriesBySavedAtDesc);
+  };
+
+  public shared ({ caller }) func deleteEntry(id : Text) : async () {
+    if (not savedEntries.containsKey(id)) {
+      Runtime.trap("Entry not found for deletion");
+    };
+    savedEntries.remove(id);
+  };
+
+  public shared ({ caller }) func deleteAllEntries() : async () {
+    savedEntries.clear();
   };
 };

@@ -21,47 +21,26 @@ import {
   ClipboardList,
   Download,
   History,
+  Loader2,
   RotateCcw,
   Save,
   Search,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { ConsumptionItem } from "../backend.d.ts";
+import type { ConsumptionItem, SavedEntry } from "../backend.d.ts";
 import { useAuth } from "../context/AuthContext";
-import { useGetAllItems, useGetDepartments } from "../hooks/useQueries";
+import {
+  useDeleteEntry,
+  useGetAllEntries,
+  useGetAllItems,
+  useGetDepartments,
+  useSaveEntry,
+} from "../hooks/useQueries";
 
-// ---- Local storage history types ----
-export interface SavedEntry {
-  id: string;
-  date: string; // ISO date string "YYYY-MM-DD"
-  savedAt: string; // ISO datetime
-  department: string; // "ALL" or specific dept
-  savedBy?: "worker" | "admin"; // who saved this entry
-  rows: {
-    itemCode: string;
-    name: string;
-    unit: string;
-    qty: number;
-    department: string;
-  }[];
-}
-
-const LS_KEY = "consumption_history_v1";
-
-function loadHistory(): SavedEntry[] {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveHistory(entries: SavedEntry[]) {
-  localStorage.setItem(LS_KEY, JSON.stringify(entries));
-}
+// Re-export SavedEntry so WorkerEntriesTab can import from here for backward compat
+export type { SavedEntry };
 
 // ---- Main Component ----
 export default function ConsumptionEntryTab() {
@@ -69,21 +48,16 @@ export default function ConsumptionEntryTab() {
   const isAdmin = role === "admin";
   const { data: items = [], isLoading } = useGetAllItems();
   const { data: departments = [] } = useGetDepartments();
+  const { data: entries = [], isLoading: entriesLoading } = useGetAllEntries();
+  const saveEntry = useSaveEntry();
+  const deleteEntry = useDeleteEntry();
 
   // Local qty state: keyed by `${itemCode}-${department}-${name}` for uniqueness
   const [qtys, setQtys] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("ALL");
   const [activeView, setActiveView] = useState<"entry" | "history">("entry");
-  const [history, setHistory] = useState<SavedEntry[]>(() => loadHistory());
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  // Reload history from LS when switching to history view
-  useEffect(() => {
-    if (activeView === "history") {
-      setHistory(loadHistory());
-    }
-  }, [activeView]);
 
   const makeKey = useCallback(
     (item: ConsumptionItem) =>
@@ -193,8 +167,8 @@ export default function ConsumptionEntryTab() {
     toast.success(`${rows.length} items exported`);
   };
 
-  // Save to history in localStorage
-  const handleSave = () => {
+  // Save entry to backend
+  const handleSave = async () => {
     const rows = (items as ConsumptionItem[])
       .filter((item) => {
         const key = makeKey(item);
@@ -223,16 +197,11 @@ export default function ConsumptionEntryTab() {
       date: now.toISOString().slice(0, 10),
       savedAt: now.toISOString(),
       department: deptFilter,
-      savedBy: role as "worker" | "admin",
+      savedBy: role ?? "worker",
       rows,
     };
 
-    const updated = [entry, ...loadHistory()];
-    saveHistory(updated);
-    setHistory(updated);
-    toast.success(
-      `Saved! ${rows.length} items — ${entry.date} (${deptFilter === "ALL" ? "All Departments" : deptFilter})`,
-    );
+    await saveEntry.mutateAsync(entry);
   };
 
   // Export a saved history entry
@@ -270,11 +239,8 @@ export default function ConsumptionEntryTab() {
     URL.revokeObjectURL(url);
   };
 
-  const handleDeleteHistory = (id: string) => {
-    const updated = loadHistory().filter((e) => e.id !== id);
-    saveHistory(updated);
-    setHistory(updated);
-    toast.success("Entry deleted");
+  const handleDeleteHistory = async (id: string) => {
+    await deleteEntry.mutateAsync(id);
   };
 
   if (isLoading) {
@@ -314,7 +280,13 @@ export default function ConsumptionEntryTab() {
           </Button>
         </div>
 
-        {history.length === 0 ? (
+        {entriesLoading ? (
+          <div className="space-y-3" data-ocid="history.loading_state">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+          </div>
+        ) : entries.length === 0 ? (
           <div
             data-ocid="history.empty_state"
             className="flex flex-col items-center justify-center py-20 text-muted-foreground border border-border rounded-lg bg-card"
@@ -327,125 +299,139 @@ export default function ConsumptionEntryTab() {
           </div>
         ) : (
           <div className="space-y-3">
-            {history.map((entry) => (
-              <div
-                key={entry.id}
-                className="border border-border rounded-lg bg-card overflow-hidden"
-                data-ocid="history.row"
-              >
-                <div className="flex items-center justify-between px-4 py-3 bg-muted/30">
-                  <div className="flex items-center gap-3">
-                    <div>
-                      <p className="font-semibold text-sm">{entry.date}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {entry.department === "ALL"
-                          ? "All Departments"
-                          : entry.department}{" "}
-                        · {entry.rows.length} items ·{" "}
-                        {new Date(entry.savedAt).toLocaleTimeString("en-IN", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </p>
+            {[...entries]
+              .sort(
+                (a, b) =>
+                  new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime(),
+              )
+              .map((entry) => (
+                <div
+                  key={entry.id}
+                  className="border border-border rounded-lg bg-card overflow-hidden"
+                  data-ocid="history.row"
+                >
+                  <div className="flex items-center justify-between px-4 py-3 bg-muted/30">
+                    <div className="flex items-center gap-3">
+                      <div>
+                        <p className="font-semibold text-sm">{entry.date}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {entry.department === "ALL"
+                            ? "All Departments"
+                            : entry.department}{" "}
+                          · {entry.rows.length} items ·{" "}
+                          {new Date(entry.savedAt).toLocaleTimeString("en-IN", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </p>
+                      </div>
+                      <Badge variant="secondary" className="text-xs">
+                        Total Qty:{" "}
+                        {entry.rows
+                          .reduce((s, r) => s + r.qty, 0)
+                          .toLocaleString()}
+                      </Badge>
+                      {entry.savedBy === "worker" ? (
+                        <Badge className="text-xs bg-blue-500/10 text-blue-600 border-blue-500/30 border">
+                          Worker
+                        </Badge>
+                      ) : (
+                        <Badge className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/30 border">
+                          Admin
+                        </Badge>
+                      )}
                     </div>
-                    <Badge variant="secondary" className="text-xs">
-                      Total Qty:{" "}
-                      {entry.rows
-                        .reduce((s, r) => s + r.qty, 0)
-                        .toLocaleString()}
-                    </Badge>
-                    {entry.savedBy === "worker" ? (
-                      <Badge className="text-xs bg-blue-500/10 text-blue-600 border-blue-500/30 border">
-                        Worker
-                      </Badge>
-                    ) : (
-                      <Badge className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/30 border">
-                        Admin
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() =>
-                        setExpandedId(expandedId === entry.id ? null : entry.id)
-                      }
-                      data-ocid="history.toggle_button"
-                    >
-                      {expandedId === entry.id ? "Hide" : "Details"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleExportHistory(entry)}
-                      data-ocid="history.export_button"
-                    >
-                      <Download className="h-3.5 w-3.5 mr-1" />
-                      Excel
-                    </Button>
-                    {isAdmin && (
+                    <div className="flex items-center gap-2">
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => handleDeleteHistory(entry.id)}
-                        data-ocid="history.delete_button"
+                        onClick={() =>
+                          setExpandedId(
+                            expandedId === entry.id ? null : entry.id,
+                          )
+                        }
+                        data-ocid="history.toggle_button"
                       >
-                        <X className="h-3.5 w-3.5" />
+                        {expandedId === entry.id ? "Hide" : "Details"}
                       </Button>
-                    )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleExportHistory(entry)}
+                        data-ocid="history.export_button"
+                      >
+                        <Download className="h-3.5 w-3.5 mr-1" />
+                        Excel
+                      </Button>
+                      {isAdmin && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => handleDeleteHistory(entry.id)}
+                          disabled={deleteEntry.isPending}
+                          data-ocid="history.delete_button"
+                        >
+                          {deleteEntry.isPending ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <X className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                {expandedId === entry.id && (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow className="bg-muted/20 hover:bg-muted/20">
-                          <TableHead className="text-xs">#</TableHead>
-                          <TableHead className="text-xs">Item Code</TableHead>
-                          <TableHead className="text-xs">Item Name</TableHead>
-                          <TableHead className="text-xs">Unit</TableHead>
-                          <TableHead className="text-xs">Qty</TableHead>
-                          <TableHead className="text-xs">Department</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {entry.rows.map((r, i) => (
-                          // biome-ignore lint/suspicious/noArrayIndexKey: stable within saved entry
-                          <TableRow key={i}>
-                            <TableCell className="text-xs text-muted-foreground">
-                              {i + 1}
-                            </TableCell>
-                            <TableCell className="font-mono text-xs text-muted-foreground">
-                              {r.itemCode || "—"}
-                            </TableCell>
-                            <TableCell className="text-sm font-medium">
-                              {r.name}
-                            </TableCell>
-                            <TableCell className="text-sm text-muted-foreground">
-                              {r.unit || "—"}
-                            </TableCell>
-                            <TableCell className="font-semibold text-sm text-primary">
-                              {r.qty.toLocaleString()}
-                            </TableCell>
-                            <TableCell>
-                              <Badge
-                                variant="secondary"
-                                className="text-xs font-normal"
-                              >
-                                {r.department}
-                              </Badge>
-                            </TableCell>
+                  {expandedId === entry.id && (
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-muted/20 hover:bg-muted/20">
+                            <TableHead className="text-xs">#</TableHead>
+                            <TableHead className="text-xs">Item Code</TableHead>
+                            <TableHead className="text-xs">Item Name</TableHead>
+                            <TableHead className="text-xs">Unit</TableHead>
+                            <TableHead className="text-xs">Qty</TableHead>
+                            <TableHead className="text-xs">
+                              Department
+                            </TableHead>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </div>
-            ))}
+                        </TableHeader>
+                        <TableBody>
+                          {entry.rows.map((r, i) => (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: stable within saved entry
+                            <TableRow key={i}>
+                              <TableCell className="text-xs text-muted-foreground">
+                                {i + 1}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs text-muted-foreground">
+                                {r.itemCode || "—"}
+                              </TableCell>
+                              <TableCell className="text-sm font-medium">
+                                {r.name}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground">
+                                {r.unit || "—"}
+                              </TableCell>
+                              <TableCell className="font-semibold text-sm text-primary">
+                                {r.qty.toLocaleString()}
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant="secondary"
+                                  className="text-xs font-normal"
+                                >
+                                  {r.department}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </div>
+              ))}
           </div>
         )}
       </div>
@@ -488,7 +474,7 @@ export default function ConsumptionEntryTab() {
             data-ocid="entry.history_button"
           >
             <History className="h-3.5 w-3.5 mr-1.5" />
-            History ({history.length})
+            History ({entries.length})
           </Button>
           <Button
             variant="outline"
@@ -505,12 +491,16 @@ export default function ConsumptionEntryTab() {
             variant="outline"
             size="sm"
             onClick={handleSave}
-            disabled={filledCount === 0}
+            disabled={filledCount === 0 || saveEntry.isPending}
             className="border-green-500/50 text-green-700 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-950"
             data-ocid="entry.save_button"
           >
-            <Save className="h-3.5 w-3.5 mr-1.5" />
-            Save
+            {saveEntry.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <Save className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            {saveEntry.isPending ? "Saving..." : "Save"}
           </Button>
           <Button
             size="sm"

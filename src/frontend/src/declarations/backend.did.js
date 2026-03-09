@@ -18,11 +18,29 @@ export const ConsumptionItem = IDL.Record({
   'quantity' : IDL.Float64,
   'department' : IDL.Text,
 });
+export const SavedRow = IDL.Record({
+  'qty' : IDL.Float64,
+  'name' : IDL.Text,
+  'unit' : IDL.Text,
+  'itemCode' : IDL.Text,
+  'department' : IDL.Text,
+});
+export const SavedEntry = IDL.Record({
+  'id' : IDL.Text,
+  'date' : IDL.Text,
+  'rows' : IDL.Vec(SavedRow),
+  'savedAt' : IDL.Text,
+  'savedBy' : IDL.Text,
+  'department' : IDL.Text,
+});
 
 export const idlService = IDL.Service({
   'addItem' : IDL.Func([ConsumptionItem], [], []),
   'bulkImport' : IDL.Func([IDL.Vec(ConsumptionItem)], [], []),
+  'deleteAllEntries' : IDL.Func([], [], []),
+  'deleteEntry' : IDL.Func([IDL.Text], [], []),
   'deleteItem' : IDL.Func([IDL.Text, IDL.Text], [], []),
+  'getAllEntries' : IDL.Func([], [IDL.Vec(SavedEntry)], ['query']),
   'getAllItems' : IDL.Func([], [IDL.Vec(ConsumptionItem)], ['query']),
   'getItemsByDepartment' : IDL.Func(
       [IDL.Text],
@@ -36,6 +54,7 @@ export const idlService = IDL.Service({
     ),
   'getUniqueDepartments' : IDL.Func([], [IDL.Vec(IDL.Text)], ['query']),
   'resetData' : IDL.Func([], [], []),
+  'saveEntry' : IDL.Func([SavedEntry], [], []),
   'searchItemsByCode' : IDL.Func(
       [IDL.Text],
       [IDL.Vec(ConsumptionItem)],
@@ -62,11 +81,29 @@ export const idlFactory = ({ IDL }) => {
     'quantity' : IDL.Float64,
     'department' : IDL.Text,
   });
+  const SavedRow = IDL.Record({
+    'qty' : IDL.Float64,
+    'name' : IDL.Text,
+    'unit' : IDL.Text,
+    'itemCode' : IDL.Text,
+    'department' : IDL.Text,
+  });
+  const SavedEntry = IDL.Record({
+    'id' : IDL.Text,
+    'date' : IDL.Text,
+    'rows' : IDL.Vec(SavedRow),
+    'savedAt' : IDL.Text,
+    'savedBy' : IDL.Text,
+    'department' : IDL.Text,
+  });
   
   return IDL.Service({
     'addItem' : IDL.Func([ConsumptionItem], [], []),
     'bulkImport' : IDL.Func([IDL.Vec(ConsumptionItem)], [], []),
+    'deleteAllEntries' : IDL.Func([], [], []),
+    'deleteEntry' : IDL.Func([IDL.Text], [], []),
     'deleteItem' : IDL.Func([IDL.Text, IDL.Text], [], []),
+    'getAllEntries' : IDL.Func([], [IDL.Vec(SavedEntry)], ['query']),
     'getAllItems' : IDL.Func([], [IDL.Vec(ConsumptionItem)], ['query']),
     'getItemsByDepartment' : IDL.Func(
         [IDL.Text],
@@ -80,6 +117,7 @@ export const idlFactory = ({ IDL }) => {
       ),
     'getUniqueDepartments' : IDL.Func([], [IDL.Vec(IDL.Text)], ['query']),
     'resetData' : IDL.Func([], [], []),
+    'saveEntry' : IDL.Func([SavedEntry], [], []),
     'searchItemsByCode' : IDL.Func(
         [IDL.Text],
         [IDL.Vec(ConsumptionItem)],
