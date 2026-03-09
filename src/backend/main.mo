@@ -111,8 +111,9 @@ actor {
 
   // ---- Saved Entries ----
 
-  // V1: old stable shape stored on-chain (no reasonCode)
-  // Kept as stable storage type for backward compatibility during upgrade.
+  // V1 type kept for stable storage compatibility with existing on-chain data.
+  // New entries are stored as V1 (reasonCode dropped).
+  // On read, V1 is upgraded to V2 (reasonCode injected as "").
   type SavedRowV1 = {
     itemCode : Text;
     name : Text;
@@ -130,7 +131,7 @@ actor {
     rows : [SavedRowV1];
   };
 
-  // V2: current shape with reasonCode (used at runtime)
+  // V2 runtime type (with reasonCode) exposed to frontend
   type SavedRow = {
     itemCode : Text;
     name : Text;
@@ -149,9 +150,7 @@ actor {
     rows : [SavedRow];
   };
 
-  // Stable storage uses V1 to remain compatible with existing on-chain data.
-  // New entries are downgraded to V1 before storage (reasonCode dropped).
-  // Reads upgrade V1 -> V2 by injecting an empty reasonCode.
+  // Stable storage stays as V1 to remain compatible with existing on-chain data.
   let savedEntries = Map.empty<Text, SavedEntryV1>();
 
   func upgradeRow(r : SavedRowV1) : SavedRow {
@@ -183,6 +182,7 @@ actor {
       unit = r.unit;
       qty = r.qty;
       department = r.department;
+      // reasonCode intentionally dropped for V1 storage
     }
   };
 

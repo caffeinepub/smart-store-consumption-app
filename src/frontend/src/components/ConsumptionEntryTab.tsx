@@ -27,9 +27,9 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { ConsumptionItem, SavedEntry, SavedRow } from "../backend.d.ts";
+import type { ConsumptionItem, SavedEntry } from "../backend.d.ts";
 import { useAuth } from "../context/AuthContext";
 import {
   useDeleteEntry,
@@ -39,22 +39,12 @@ import {
   useSaveEntry,
 } from "../hooks/useQueries";
 
-// Re-export SavedEntry so WorkerEntriesTab can import from here for backward compat
 export type { SavedEntry };
 
-type ReasonCode = "CONS" | "WASTAGE" | "";
+function makeKey(item: ConsumptionItem): string {
+  return `${item.itemCode || ""}-${item.department}-${item.name}`;
+}
 
-// Local row type that always has reasonCode (backend.d.ts SavedRow)
-type RowWithReason = {
-  itemCode: string;
-  name: string;
-  unit: string;
-  qty: number;
-  department: string;
-  reasonCode: string;
-};
-
-// ---- Main Component ----
 export default function ConsumptionEntryTab() {
   const { role } = useAuth();
   const isAdmin = role === "admin";
@@ -64,41 +54,17 @@ export default function ConsumptionEntryTab() {
   const saveEntry = useSaveEntry();
   const deleteEntry = useDeleteEntry();
 
-  // Local qty state: keyed by `${itemCode}-${department}-${name}` for uniqueness
   const [qtys, setQtys] = useState<Record<string, string>>({});
-  // Reason code per row
-  const [reasonCodes, setReasonCodes] = useState<Record<string, ReasonCode>>(
-    {},
-  );
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("ALL");
-  const [reasonFilter, setReasonFilter] = useState<"ALL" | "CONS" | "WASTAGE">(
-    "ALL",
-  );
   const [activeView, setActiveView] = useState<"entry" | "history">("entry");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const makeKey = useCallback(
-    (item: ConsumptionItem) =>
-      `${item.itemCode || ""}-${item.department}-${item.name}`,
-    [],
-  );
-
-  // Filtered items: first by dept, then by reason, then by search
   const filteredItems = useMemo(() => {
     let result = items as ConsumptionItem[];
-
     if (deptFilter !== "ALL") {
       result = result.filter((item) => item.department === deptFilter);
     }
-
-    if (reasonFilter !== "ALL") {
-      result = result.filter((item) => {
-        const key = makeKey(item);
-        return reasonCodes[key] === reasonFilter;
-      });
-    }
-
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter(
@@ -109,9 +75,8 @@ export default function ConsumptionEntryTab() {
           (item.notes || "").toLowerCase().includes(q),
       );
     }
-
     return result;
-  }, [items, deptFilter, reasonFilter, reasonCodes, search, makeKey]);
+  }, [items, deptFilter, search]);
 
   const filledCount = useMemo(
     () =>
@@ -122,59 +87,45 @@ export default function ConsumptionEntryTab() {
     [qtys],
   );
 
-  // Count filled rows in currently visible filtered items
   const visibleFilledCount = useMemo(
     () =>
       filteredItems.filter((item) => {
-        const key = makeKey(item);
-        const n = Number(qtys[key] ?? "0");
+        const n = Number(qtys[makeKey(item)] ?? "0");
         return !Number.isNaN(n) && n > 0;
       }).length,
-    [filteredItems, qtys, makeKey],
+    [filteredItems, qtys],
   );
 
   const handleQtyChange = (key: string, value: string) => {
     setQtys((prev) => ({ ...prev, [key]: value }));
   };
 
-  const handleReasonChange = (key: string, value: ReasonCode) => {
-    setReasonCodes((prev) => ({ ...prev, [key]: value }));
-  };
-
   const handleClearAll = () => {
     setQtys({});
-    setReasonCodes({});
   };
 
-  // Export to CSV (all filled rows across ALL departments)
   const handleExport = () => {
     const rows = (items as ConsumptionItem[]).filter((item) => {
-      const key = makeKey(item);
-      const n = Number(qtys[key] ?? "0");
+      const n = Number(qtys[makeKey(item)] ?? "0");
       return !Number.isNaN(n) && n > 0;
     });
-
     if (rows.length === 0) {
       toast.error("Koi bhi qty nahi bhari hai export karne ke liye");
       return;
     }
-
     const headers = [
       "Date",
       "Item Code",
       "Item Name",
       "Qty",
       "Unit",
-      "Reason Code",
       "Department",
     ];
     const today = new Date().toISOString().slice(0, 10);
     const csvRows = [
       headers.join(","),
       ...rows.map((item) => {
-        const key = makeKey(item);
-        const qty = qtys[key] ?? "0";
-        const reasonCode = reasonCodes[key] || "";
+        const qty = qtys[makeKey(item)] ?? "0";
         const displayCode = item.notes || item.itemCode || "";
         return [
           today,
@@ -182,12 +133,10 @@ export default function ConsumptionEntryTab() {
           `"${item.name.replace(/"/g, '""')}"`,
           qty,
           `"${item.unit.replace(/"/g, '""')}"`,
-          `"${reasonCode}"`,
           `"${item.department.replace(/"/g, '""')}"`,
         ].join(",");
       }),
     ];
-
     const csvContent = csvRows.join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -201,44 +150,30 @@ export default function ConsumptionEntryTab() {
     toast.success(`${rows.length} items exported`);
   };
 
-  // Save entry to backend
-  // FIX: Wrap in try/catch so mutateAsync errors don't become unhandled rejections.
-  // Reason Code is OPTIONAL -- only Qty > 0 is needed to save a row.
   const handleSave = async () => {
     try {
       const allItems = items as ConsumptionItem[];
-
-      // If items haven't loaded yet, tell the user to wait
       if (allItems.length === 0) {
         toast.error("Items abhi load ho rahe hain, please thoda wait karein");
         return;
       }
-
-      // Build rows from ALL items (across all departments) where qty > 0
-      // Reason Code (CONS/WASTAGE) is optional -- empty string is perfectly fine
       const rows = allItems
         .filter((item) => {
-          const key = makeKey(item);
-          const n = Number(qtys[key] ?? "0");
+          const n = Number(qtys[makeKey(item)] ?? "0");
           return !Number.isNaN(n) && n > 0;
         })
-        .map((item) => {
-          const key = makeKey(item);
-          return {
-            itemCode: item.notes || item.itemCode || "",
-            name: item.name,
-            unit: item.unit,
-            qty: Number(qtys[key] ?? "0"),
-            department: item.department,
-            reasonCode: reasonCodes[key] || "", // empty string is OK, not required
-          };
-        });
-
+        .map((item) => ({
+          itemCode: item.notes || item.itemCode || "",
+          name: item.name,
+          unit: item.unit,
+          qty: Number(qtys[makeKey(item)] ?? "0"),
+          department: item.department,
+          reasonCode: "",
+        }));
       if (rows.length === 0) {
         toast.error("Koi bhi qty nahi bhari -- pehle kuch qty bharein");
         return;
       }
-
       const now = new Date();
       const entry: SavedEntry = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -248,19 +183,12 @@ export default function ConsumptionEntryTab() {
         savedBy: role ?? "worker",
         rows,
       };
-
-      // mutateAsync throws on error -- the mutation's onError already shows a toast,
-      // so we just catch here to prevent unhandled promise rejection
       await saveEntry.mutateAsync(entry);
-      // onSuccess in useSaveEntry shows "Saved!" toast, so no extra toast needed here
     } catch (err) {
-      // The useSaveEntry onError already shows toast.error("Save karne mein error aaya")
-      // Just log for debugging; avoid double-toasting
       console.error("[ConsumptionEntryTab] handleSave error:", err);
     }
   };
 
-  // Export a saved history entry
   const handleExportHistory = (entry: SavedEntry) => {
     const headers = [
       "Date",
@@ -268,19 +196,17 @@ export default function ConsumptionEntryTab() {
       "Item Name",
       "Qty",
       "Unit",
-      "Reason Code",
       "Department",
     ];
     const csvRows = [
       headers.join(","),
-      ...(entry.rows as unknown as RowWithReason[]).map((r) =>
+      ...entry.rows.map((r) =>
         [
           entry.date,
           `"${r.itemCode.replace(/"/g, '""')}"`,
           `"${r.name.replace(/"/g, '""')}"`,
           r.qty,
           `"${r.unit.replace(/"/g, '""')}"`,
-          `"${r.reasonCode || ""}"`,
           `"${r.department.replace(/"/g, '""')}"`,
         ].join(","),
       ),
@@ -455,61 +381,39 @@ export default function ConsumptionEntryTab() {
                             <TableHead className="text-xs">Qty</TableHead>
                             <TableHead className="text-xs">Unit</TableHead>
                             <TableHead className="text-xs">
-                              Reason Code
-                            </TableHead>
-                            <TableHead className="text-xs">
                               Department
                             </TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {(entry.rows as unknown as RowWithReason[]).map(
-                            (r, i) => (
-                              // biome-ignore lint/suspicious/noArrayIndexKey: stable within saved entry
-                              <TableRow key={i}>
-                                <TableCell className="text-xs text-muted-foreground">
-                                  {i + 1}
-                                </TableCell>
-                                <TableCell className="font-mono text-xs text-muted-foreground">
-                                  {r.itemCode || "—"}
-                                </TableCell>
-                                <TableCell className="text-sm font-medium">
-                                  {r.name}
-                                </TableCell>
-                                <TableCell className="font-semibold text-sm text-primary">
-                                  {r.qty.toLocaleString()}
-                                </TableCell>
-                                <TableCell className="text-sm text-muted-foreground">
-                                  {r.unit || "—"}
-                                </TableCell>
-                                <TableCell>
-                                  {r.reasonCode ? (
-                                    <Badge
-                                      className={`text-xs font-semibold ${
-                                        r.reasonCode === "CONS"
-                                          ? "bg-blue-500/10 text-blue-600 border-blue-500/30 border"
-                                          : "bg-orange-500/10 text-orange-600 border-orange-500/30 border"
-                                      }`}
-                                    >
-                                      {r.reasonCode}
-                                    </Badge>
-                                  ) : (
-                                    <span className="text-muted-foreground/40 text-xs">
-                                      —
-                                    </span>
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-xs font-normal"
-                                  >
-                                    {r.department}
-                                  </Badge>
-                                </TableCell>
-                              </TableRow>
-                            ),
-                          )}
+                          {entry.rows.map((r, i) => (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: stable within saved entry
+                            <TableRow key={i}>
+                              <TableCell className="text-xs text-muted-foreground">
+                                {i + 1}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs text-muted-foreground">
+                                {r.itemCode || "—"}
+                              </TableCell>
+                              <TableCell className="text-sm font-medium">
+                                {r.name}
+                              </TableCell>
+                              <TableCell className="font-semibold text-sm text-primary">
+                                {r.qty.toLocaleString()}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground">
+                                {r.unit || "—"}
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant="secondary"
+                                  className="text-xs font-normal"
+                                >
+                                  {r.department}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
                         </TableBody>
                       </Table>
                     </div>
@@ -525,7 +429,6 @@ export default function ConsumptionEntryTab() {
   // ---- ENTRY VIEW ----
   return (
     <div className="space-y-4">
-      {/* Header toolbar */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
         <div className="flex items-center gap-2.5">
           <div className="bg-primary/10 rounded-lg p-1.5">
@@ -536,7 +439,7 @@ export default function ConsumptionEntryTab() {
               Consumption Entry
             </h2>
             <p className="text-xs text-muted-foreground leading-tight mt-0.5">
-              Qty bharein (Reason Code optional hai), Save/Export karein
+              Qty bharein, Save ya Export karein
             </p>
           </div>
           {filledCount > 0 && (
@@ -599,29 +502,8 @@ export default function ConsumptionEntryTab() {
         </div>
       </div>
 
-      {/* Filters row: Reason Code + Department + Search */}
+      {/* Filters: Department + Search */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center flex-wrap">
-        {/* Reason Code Filter */}
-        <Select
-          value={reasonFilter}
-          onValueChange={(val) =>
-            setReasonFilter(val as "ALL" | "CONS" | "WASTAGE")
-          }
-        >
-          <SelectTrigger
-            className="w-full sm:w-40"
-            data-ocid="entry.reason_filter_select"
-          >
-            <SelectValue placeholder="All Reasons" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">All Reasons</SelectItem>
-            <SelectItem value="CONS">CONS</SelectItem>
-            <SelectItem value="WASTAGE">WASTAGE</SelectItem>
-          </SelectContent>
-        </Select>
-
-        {/* Department Filter */}
         <Select
           value={deptFilter}
           onValueChange={(val) => {
@@ -645,7 +527,6 @@ export default function ConsumptionEntryTab() {
           </SelectContent>
         </Select>
 
-        {/* Search */}
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -666,7 +547,6 @@ export default function ConsumptionEntryTab() {
           )}
         </div>
 
-        {/* Item count info */}
         <p className="text-xs text-muted-foreground whitespace-nowrap">
           {filteredItems.length} items
           {visibleFilledCount > 0 && (
@@ -698,12 +578,6 @@ export default function ConsumptionEntryTab() {
                 <TableHead className="text-xs font-semibold text-muted-foreground w-20">
                   Unit
                 </TableHead>
-                <TableHead className="text-xs font-semibold text-muted-foreground w-36">
-                  Reason Code
-                  <span className="ml-1 text-muted-foreground/50 font-normal">
-                    (optional)
-                  </span>
-                </TableHead>
                 <TableHead className="text-xs font-semibold text-muted-foreground min-w-32">
                   Department
                 </TableHead>
@@ -712,23 +586,19 @@ export default function ConsumptionEntryTab() {
             <TableBody>
               {filteredItems.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7}>
+                  <TableCell colSpan={6}>
                     <div
                       data-ocid="entry.empty_state"
                       className="flex flex-col items-center justify-center py-16 text-muted-foreground"
                     >
                       <ClipboardList className="h-10 w-10 mb-3 opacity-30" />
                       <p className="font-medium">
-                        {search ||
-                        deptFilter !== "ALL" ||
-                        reasonFilter !== "ALL"
+                        {search || deptFilter !== "ALL"
                           ? "Koi item nahi mila"
                           : "Koi item nahi hai"}
                       </p>
                       <p className="text-sm mt-1">
-                        {search ||
-                        deptFilter !== "ALL" ||
-                        reasonFilter !== "ALL"
+                        {search || deptFilter !== "ALL"
                           ? "Filter ya search change karein"
                           : "Pehle Items tab mein items add karein"}
                       </p>
@@ -739,7 +609,6 @@ export default function ConsumptionEntryTab() {
                 filteredItems.map((item, idx) => {
                   const key = makeKey(item);
                   const qtyVal = qtys[key] ?? "";
-                  const reasonVal = reasonCodes[key] ?? "";
                   const hasQty =
                     qtyVal !== "" &&
                     !Number.isNaN(Number(qtyVal)) &&
@@ -795,31 +664,6 @@ export default function ConsumptionEntryTab() {
                         {item.unit || "—"}
                       </TableCell>
                       <TableCell>
-                        <Select
-                          value={reasonVal}
-                          onValueChange={(val) =>
-                            handleReasonChange(key, val as ReasonCode)
-                          }
-                        >
-                          <SelectTrigger
-                            className={`h-8 w-32 text-xs ${
-                              reasonVal === "CONS"
-                                ? "border-blue-500/50 bg-blue-500/5 text-blue-700 dark:text-blue-400"
-                                : reasonVal === "WASTAGE"
-                                  ? "border-orange-500/50 bg-orange-500/5 text-orange-700 dark:text-orange-400"
-                                  : ""
-                            }`}
-                            data-ocid={`entry.reason_select.${idx + 1}`}
-                          >
-                            <SelectValue placeholder="Select..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="CONS">CONS</SelectItem>
-                            <SelectItem value="WASTAGE">WASTAGE</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell>
                         <Badge
                           variant="secondary"
                           className="text-xs font-normal"
@@ -836,9 +680,8 @@ export default function ConsumptionEntryTab() {
         </div>
       </div>
 
-      {/* Footer hint */}
       <p className="text-xs text-muted-foreground text-center">
-        Qty bharein (Reason Code optional hai), phir{" "}
+        Qty bharein, phir{" "}
         <button
           type="button"
           onClick={handleSave}
@@ -857,8 +700,7 @@ export default function ConsumptionEntryTab() {
             Export ({filledCount} items)
           </button>
         )}{" "}
-        karo Excel mein. Refresh karne par entry data hat jata hai — Save zaroor
-        karein.
+        karo Excel mein.
       </p>
     </div>
   );
