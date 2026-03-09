@@ -7,8 +7,6 @@ import Set "mo:core/Set";
 import Iter "mo:core/Iter";
 import Runtime "mo:core/Runtime";
 
-
-
 actor {
   // Consumption Items
   type ConsumptionItem = {
@@ -37,7 +35,7 @@ actor {
 
   public shared ({ caller }) func addItem(item : ConsumptionItem) : async () {
     let key = makeCompositeKey(item.name, item.department);
-    items.add(key, item); // upsert behavior
+    items.add(key, item);
   };
 
   public shared ({ caller }) func bulkImport(newItems : [ConsumptionItem]) : async () {
@@ -54,7 +52,6 @@ actor {
   public shared ({ caller }) func updateItemQuantity(name : Text, department : Text, newQuantity : Float) : async () {
     let key = makeCompositeKey(name, department);
     let itemOpt = items.get(key);
-
     switch (itemOpt) {
       case (null) { Runtime.trap("Item not found for update") };
       case (?item) {
@@ -64,12 +61,9 @@ actor {
     };
   };
 
-  // Update full item details (itemCode, name, unit, department, notes)
   public shared ({ caller }) func updateItem(oldName : Text, oldDepartment : Text, updatedItem : ConsumptionItem) : async () {
     let oldKey = makeCompositeKey(oldName, oldDepartment);
-    // Remove old entry
     items.remove(oldKey);
-    // Insert with new key (name/department may have changed)
     let newKey = makeCompositeKey(updatedItem.name, updatedItem.department);
     items.add(newKey, updatedItem);
   };
@@ -117,7 +111,7 @@ actor {
 
   // ---- Saved Entries ----
 
-  // V1: old shape stored on-chain (no reasonCode) -- must stay compatible
+  // V1: old stable shape (no reasonCode) -- kept for migration compatibility
   type SavedRowV1 = {
     itemCode : Text;
     name : Text;
@@ -135,7 +129,7 @@ actor {
     rows : [SavedRowV1];
   };
 
-  // V2: new shape with reasonCode (used at runtime only)
+  // V2: current shape with reasonCode
   type SavedRow = {
     itemCode : Text;
     name : Text;
@@ -154,10 +148,11 @@ actor {
     rows : [SavedRow];
   };
 
-  // Stable storage keeps V1 shape (compatible with existing on-chain data)
+  // Stable storage still uses V1 to remain compatible with existing on-chain data.
+  // New entries are downgraded to V1 before storage (reasonCode dropped).
+  // Reads upgrade V1 -> V2 by injecting an empty reasonCode.
   let savedEntries = Map.empty<Text, SavedEntryV1>();
 
-  // Migrate V1 -> V2: default reasonCode to ""
   func migrateEntry(e : SavedEntryV1) : SavedEntry {
     {
       id = e.id;
@@ -180,7 +175,6 @@ actor {
     }
   };
 
-  // Downgrade V2 -> V1 for stable storage (reasonCode dropped)
   func downgradeEntry(e : SavedEntry) : SavedEntryV1 {
     {
       id = e.id;
@@ -203,7 +197,7 @@ actor {
   };
 
   func compareEntriesBySavedAtDesc(a : SavedEntryV1, b : SavedEntryV1) : Order.Order {
-    Text.compare(b.savedAt, a.savedAt); // reverse - newest first
+    Text.compare(b.savedAt, a.savedAt);
   };
 
   public shared ({ caller }) func saveEntry(entry : SavedEntry) : async () {
