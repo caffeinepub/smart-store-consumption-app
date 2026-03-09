@@ -241,7 +241,7 @@ export default function ConsumptionEntryTab() {
 
       const now = new Date();
       const entry: SavedEntry = {
-        id: `${Date.now()}`,
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         date: now.toISOString().slice(0, 10),
         savedAt: now.toISOString(),
         department: deptFilter,

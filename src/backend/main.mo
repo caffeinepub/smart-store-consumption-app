@@ -111,7 +111,8 @@ actor {
 
   // ---- Saved Entries ----
 
-  // V1: old stable shape (no reasonCode) -- kept for migration compatibility
+  // V1: old stable shape stored on-chain (no reasonCode)
+  // Kept as stable storage type for backward compatibility during upgrade.
   type SavedRowV1 = {
     itemCode : Text;
     name : Text;
@@ -129,7 +130,7 @@ actor {
     rows : [SavedRowV1];
   };
 
-  // V2: current shape with reasonCode
+  // V2: current shape with reasonCode (used at runtime)
   type SavedRow = {
     itemCode : Text;
     name : Text;
@@ -148,30 +149,40 @@ actor {
     rows : [SavedRow];
   };
 
-  // Stable storage still uses V1 to remain compatible with existing on-chain data.
+  // Stable storage uses V1 to remain compatible with existing on-chain data.
   // New entries are downgraded to V1 before storage (reasonCode dropped).
   // Reads upgrade V1 -> V2 by injecting an empty reasonCode.
   let savedEntries = Map.empty<Text, SavedEntryV1>();
 
-  func migrateEntry(e : SavedEntryV1) : SavedEntry {
+  func upgradeRow(r : SavedRowV1) : SavedRow {
+    {
+      itemCode = r.itemCode;
+      name = r.name;
+      unit = r.unit;
+      qty = r.qty;
+      department = r.department;
+      reasonCode = "";
+    }
+  };
+
+  func upgradeEntry(e : SavedEntryV1) : SavedEntry {
     {
       id = e.id;
       date = e.date;
       savedAt = e.savedAt;
       department = e.department;
       savedBy = e.savedBy;
-      rows = e.rows.map(
-        func(r : SavedRowV1) : SavedRow {
-          {
-            itemCode = r.itemCode;
-            name = r.name;
-            unit = r.unit;
-            qty = r.qty;
-            department = r.department;
-            reasonCode = "";
-          }
-        },
-      );
+      rows = e.rows.map(upgradeRow);
+    }
+  };
+
+  func downgradeRow(r : SavedRow) : SavedRowV1 {
+    {
+      itemCode = r.itemCode;
+      name = r.name;
+      unit = r.unit;
+      qty = r.qty;
+      department = r.department;
     }
   };
 
@@ -182,17 +193,7 @@ actor {
       savedAt = e.savedAt;
       department = e.department;
       savedBy = e.savedBy;
-      rows = e.rows.map(
-        func(r : SavedRow) : SavedRowV1 {
-          {
-            itemCode = r.itemCode;
-            name = r.name;
-            unit = r.unit;
-            qty = r.qty;
-            department = r.department;
-          }
-        },
-      );
+      rows = e.rows.map(downgradeRow);
     }
   };
 
@@ -205,7 +206,7 @@ actor {
   };
 
   public query ({ caller }) func getAllEntries() : async [SavedEntry] {
-    savedEntries.values().toArray().sort(compareEntriesBySavedAtDesc).map(migrateEntry);
+    savedEntries.values().toArray().sort(compareEntriesBySavedAtDesc).map(upgradeEntry);
   };
 
   public shared ({ caller }) func deleteEntry(id : Text) : async () {

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { ConsumptionItem, SavedEntry } from "../backend.d.ts";
+import type { ConsumptionItem, SavedEntry, SavedRow } from "../backend.d.ts";
 import { useActor } from "./useActor";
 
 export function useGetAllItems() {
@@ -74,10 +74,10 @@ export function useAddItem() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["items"] });
       queryClient.invalidateQueries({ queryKey: ["departments"] });
-      toast.success("Item added successfully");
+      toast.success("Item add ho gaya");
     },
     onError: () => {
-      toast.error("Failed to add item");
+      toast.error("Item add karne mein error aaya");
     },
   });
 }
@@ -93,10 +93,10 @@ export function useBulkImport() {
     onSuccess: (_, items) => {
       queryClient.invalidateQueries({ queryKey: ["items"] });
       queryClient.invalidateQueries({ queryKey: ["departments"] });
-      toast.success(`Successfully imported ${items.length} items`);
+      toast.success(`${items.length} items import ho gaye`);
     },
     onError: () => {
-      toast.error("Failed to import items");
+      toast.error("Import karne mein error aaya");
     },
   });
 }
@@ -115,10 +115,10 @@ export function useDeleteItem() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["items"] });
       queryClient.invalidateQueries({ queryKey: ["departments"] });
-      toast.success("Item deleted");
+      toast.success("Item delete ho gaya");
     },
     onError: () => {
-      toast.error("Failed to delete item");
+      toast.error("Delete karne mein error aaya");
     },
   });
 }
@@ -141,10 +141,10 @@ export function useUpdateItemQuantity() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["items"] });
-      toast.success("Quantity updated");
+      toast.success("Quantity update ho gaya");
     },
     onError: () => {
-      toast.error("Failed to update quantity");
+      toast.error("Quantity update karne mein error aaya");
     },
   });
 }
@@ -168,10 +168,10 @@ export function useUpdateItem() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["items"] });
       queryClient.invalidateQueries({ queryKey: ["departments"] });
-      toast.success("Item updated successfully");
+      toast.success("Item update ho gaya");
     },
     onError: () => {
-      toast.error("Failed to update item");
+      toast.error("Item update karne mein error aaya");
     },
   });
 }
@@ -187,10 +187,10 @@ export function useResetData() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["items"] });
       queryClient.invalidateQueries({ queryKey: ["departments"] });
-      toast.success("All data has been reset");
+      toast.success("Sab data reset ho gaya");
     },
     onError: () => {
-      toast.error("Failed to reset data");
+      toast.error("Reset karne mein error aaya");
     },
   });
 }
@@ -214,15 +214,20 @@ export function useSaveEntry() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (entry: SavedEntry) => {
-      if (!actor) throw new Error("Actor not available");
+      if (!actor)
+        throw new Error(
+          "Backend se connection nahi hai -- thoda wait karke dobara try karein",
+        );
       await actor.saveEntry(entry);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["entries"] });
-      toast.success("Saved!");
+      toast.success("Entry save ho gayi!");
     },
-    onError: () => {
-      toast.error("Save karne mein error aaya");
+    onError: (err) => {
+      const msg =
+        err instanceof Error ? err.message : "Save karne mein error aaya";
+      toast.error(msg);
     },
   });
 }
