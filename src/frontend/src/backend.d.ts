@@ -31,6 +31,7 @@ export interface SavedRow {
     unit: string;
     itemCode: string;
     department: string;
+    reasonCode: string;
 }
 export interface backendInterface {
     addItem(item: ConsumptionItem): Promise<void>;
@@ -47,5 +48,6 @@ export interface backendInterface {
     saveEntry(entry: SavedEntry): Promise<void>;
     searchItemsByCode(searchTerm: string): Promise<Array<ConsumptionItem>>;
     searchItemsByName(searchTerm: string): Promise<Array<ConsumptionItem>>;
+    updateItem(oldName: string, oldDepartment: string, updatedItem: ConsumptionItem): Promise<void>;
     updateItemQuantity(name: string, department: string, newQuantity: number): Promise<void>;
 }

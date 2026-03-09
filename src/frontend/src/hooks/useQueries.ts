@@ -149,6 +149,33 @@ export function useUpdateItemQuantity() {
   });
 }
 
+export function useUpdateItem() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      oldName,
+      oldDepartment,
+      updatedItem,
+    }: {
+      oldName: string;
+      oldDepartment: string;
+      updatedItem: ConsumptionItem;
+    }) => {
+      if (!actor) throw new Error("Actor not available");
+      await actor.updateItem(oldName, oldDepartment, updatedItem);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["items"] });
+      queryClient.invalidateQueries({ queryKey: ["departments"] });
+      toast.success("Item updated successfully");
+    },
+    onError: () => {
+      toast.error("Failed to update item");
+    },
+  });
+}
+
 export function useResetData() {
   const { actor } = useActor();
   const queryClient = useQueryClient();

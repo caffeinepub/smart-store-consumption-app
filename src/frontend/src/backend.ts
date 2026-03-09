@@ -129,6 +129,7 @@ export interface backendInterface {
     saveEntry(entry: SavedEntry): Promise<void>;
     searchItemsByCode(searchTerm: string): Promise<Array<ConsumptionItem>>;
     searchItemsByName(searchTerm: string): Promise<Array<ConsumptionItem>>;
+    updateItem(oldName: string, oldDepartment: string, updatedItem: ConsumptionItem): Promise<void>;
     updateItemQuantity(name: string, department: string, newQuantity: number): Promise<void>;
 }
 export class Backend implements backendInterface {
@@ -326,6 +327,20 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.searchItemsByName(arg0);
+            return result;
+        }
+    }
+    async updateItem(arg0: string, arg1: string, arg2: ConsumptionItem): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.updateItem(arg0, arg1, arg2);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.updateItem(arg0, arg1, arg2);
             return result;
         }
     }

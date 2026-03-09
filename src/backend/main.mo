@@ -6,9 +6,9 @@ import Array "mo:core/Array";
 import Set "mo:core/Set";
 import Iter "mo:core/Iter";
 import Runtime "mo:core/Runtime";
-import Migration "migration";
 
-(with migration = Migration.run)
+
+
 actor {
   // Consumption Items
   type ConsumptionItem = {
@@ -22,12 +22,10 @@ actor {
     notes : Text;
   };
 
-  module ConsumptionItem {
-    public func compare(a : ConsumptionItem, b : ConsumptionItem) : Order.Order {
-      switch (Text.compare(a.department, b.department)) {
-        case (#equal) { Text.compare(a.name, b.name) };
-        case (order) { order };
-      };
+  func compareItems(a : ConsumptionItem, b : ConsumptionItem) : Order.Order {
+    switch (Text.compare(a.department, b.department)) {
+      case (#equal) { Text.compare(a.name, b.name) };
+      case (order) { order };
     };
   };
 
@@ -66,6 +64,16 @@ actor {
     };
   };
 
+  // Update full item details (itemCode, name, unit, department, notes)
+  public shared ({ caller }) func updateItem(oldName : Text, oldDepartment : Text, updatedItem : ConsumptionItem) : async () {
+    let oldKey = makeCompositeKey(oldName, oldDepartment);
+    // Remove old entry
+    items.remove(oldKey);
+    // Insert with new key (name/department may have changed)
+    let newKey = makeCompositeKey(updatedItem.name, updatedItem.department);
+    items.add(newKey, updatedItem);
+  };
+
   public shared ({ caller }) func deleteItem(name : Text, department : Text) : async () {
     let key = makeCompositeKey(name, department);
     if (not items.containsKey(key)) {
@@ -75,7 +83,7 @@ actor {
   };
 
   public query ({ caller }) func getAllItems() : async [ConsumptionItem] {
-    items.values().toArray().sort();
+    items.values().toArray().sort(compareItems);
   };
 
   public query ({ caller }) func getItemsByDepartment(department : Text) : async [ConsumptionItem] {
@@ -107,13 +115,34 @@ actor {
     items.clear();
   };
 
-  // Saved Entries
+  // ---- Saved Entries ----
+
+  // V1: old shape stored on-chain (no reasonCode) -- must stay compatible
+  type SavedRowV1 = {
+    itemCode : Text;
+    name : Text;
+    unit : Text;
+    qty : Float;
+    department : Text;
+  };
+
+  type SavedEntryV1 = {
+    id : Text;
+    date : Text;
+    savedAt : Text;
+    department : Text;
+    savedBy : Text;
+    rows : [SavedRowV1];
+  };
+
+  // V2: new shape with reasonCode (used at runtime only)
   type SavedRow = {
     itemCode : Text;
     name : Text;
     unit : Text;
     qty : Float;
     department : Text;
+    reasonCode : Text;
   };
 
   type SavedEntry = {
@@ -125,18 +154,64 @@ actor {
     rows : [SavedRow];
   };
 
-  let savedEntries = Map.empty<Text, SavedEntry>();
+  // Stable storage keeps V1 shape (compatible with existing on-chain data)
+  let savedEntries = Map.empty<Text, SavedEntryV1>();
 
-  func compareEntriesBySavedAtDesc(a : SavedEntry, b : SavedEntry) : Order.Order {
+  // Migrate V1 -> V2: default reasonCode to ""
+  func migrateEntry(e : SavedEntryV1) : SavedEntry {
+    {
+      id = e.id;
+      date = e.date;
+      savedAt = e.savedAt;
+      department = e.department;
+      savedBy = e.savedBy;
+      rows = e.rows.map(
+        func(r : SavedRowV1) : SavedRow {
+          {
+            itemCode = r.itemCode;
+            name = r.name;
+            unit = r.unit;
+            qty = r.qty;
+            department = r.department;
+            reasonCode = "";
+          }
+        },
+      );
+    }
+  };
+
+  // Downgrade V2 -> V1 for stable storage (reasonCode dropped)
+  func downgradeEntry(e : SavedEntry) : SavedEntryV1 {
+    {
+      id = e.id;
+      date = e.date;
+      savedAt = e.savedAt;
+      department = e.department;
+      savedBy = e.savedBy;
+      rows = e.rows.map(
+        func(r : SavedRow) : SavedRowV1 {
+          {
+            itemCode = r.itemCode;
+            name = r.name;
+            unit = r.unit;
+            qty = r.qty;
+            department = r.department;
+          }
+        },
+      );
+    }
+  };
+
+  func compareEntriesBySavedAtDesc(a : SavedEntryV1, b : SavedEntryV1) : Order.Order {
     Text.compare(b.savedAt, a.savedAt); // reverse - newest first
   };
 
   public shared ({ caller }) func saveEntry(entry : SavedEntry) : async () {
-    savedEntries.add(entry.id, entry);
+    savedEntries.add(entry.id, downgradeEntry(entry));
   };
 
   public query ({ caller }) func getAllEntries() : async [SavedEntry] {
-    savedEntries.values().toArray().sort(compareEntriesBySavedAtDesc);
+    savedEntries.values().toArray().sort(compareEntriesBySavedAtDesc).map(migrateEntry);
   };
 
   public shared ({ caller }) func deleteEntry(id : Text) : async () {

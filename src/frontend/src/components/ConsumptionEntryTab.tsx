@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { ConsumptionItem, SavedEntry } from "../backend.d.ts";
+import type { ConsumptionItem, SavedEntry, SavedRow } from "../backend.d.ts";
 import { useAuth } from "../context/AuthContext";
 import {
   useDeleteEntry,
@@ -41,6 +41,18 @@ import {
 
 // Re-export SavedEntry so WorkerEntriesTab can import from here for backward compat
 export type { SavedEntry };
+
+type ReasonCode = "CONS" | "WASTAGE" | "";
+
+// Local row type that always has reasonCode (backend.d.ts SavedRow)
+type RowWithReason = {
+  itemCode: string;
+  name: string;
+  unit: string;
+  qty: number;
+  department: string;
+  reasonCode: string;
+};
 
 // ---- Main Component ----
 export default function ConsumptionEntryTab() {
@@ -54,8 +66,15 @@ export default function ConsumptionEntryTab() {
 
   // Local qty state: keyed by `${itemCode}-${department}-${name}` for uniqueness
   const [qtys, setQtys] = useState<Record<string, string>>({});
+  // Reason code per row
+  const [reasonCodes, setReasonCodes] = useState<Record<string, ReasonCode>>(
+    {},
+  );
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("ALL");
+  const [reasonFilter, setReasonFilter] = useState<"ALL" | "CONS" | "WASTAGE">(
+    "ALL",
+  );
   const [activeView, setActiveView] = useState<"entry" | "history">("entry");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -65,12 +84,19 @@ export default function ConsumptionEntryTab() {
     [],
   );
 
-  // Filtered items: first by dept, then by search
+  // Filtered items: first by dept, then by reason, then by search
   const filteredItems = useMemo(() => {
     let result = items as ConsumptionItem[];
 
     if (deptFilter !== "ALL") {
       result = result.filter((item) => item.department === deptFilter);
+    }
+
+    if (reasonFilter !== "ALL") {
+      result = result.filter((item) => {
+        const key = makeKey(item);
+        return reasonCodes[key] === reasonFilter;
+      });
     }
 
     if (search.trim()) {
@@ -85,7 +111,7 @@ export default function ConsumptionEntryTab() {
     }
 
     return result;
-  }, [items, deptFilter, search]);
+  }, [items, deptFilter, reasonFilter, reasonCodes, search, makeKey]);
 
   const filledCount = useMemo(
     () =>
@@ -111,8 +137,13 @@ export default function ConsumptionEntryTab() {
     setQtys((prev) => ({ ...prev, [key]: value }));
   };
 
+  const handleReasonChange = (key: string, value: ReasonCode) => {
+    setReasonCodes((prev) => ({ ...prev, [key]: value }));
+  };
+
   const handleClearAll = () => {
     setQtys({});
+    setReasonCodes({});
   };
 
   // Export to CSV (all filled rows across ALL departments)
@@ -132,8 +163,9 @@ export default function ConsumptionEntryTab() {
       "Date",
       "Item Code",
       "Item Name",
-      "Unit",
       "Qty",
+      "Unit",
+      "Reason Code",
       "Department",
     ];
     const today = new Date().toISOString().slice(0, 10);
@@ -142,13 +174,15 @@ export default function ConsumptionEntryTab() {
       ...rows.map((item) => {
         const key = makeKey(item);
         const qty = qtys[key] ?? "0";
+        const reasonCode = reasonCodes[key] || "";
         const displayCode = item.notes || item.itemCode || "";
         return [
           today,
           `"${displayCode.replace(/"/g, '""')}"`,
           `"${item.name.replace(/"/g, '""')}"`,
-          `"${item.unit.replace(/"/g, '""')}"`,
           qty,
+          `"${item.unit.replace(/"/g, '""')}"`,
+          `"${reasonCode}"`,
           `"${item.department.replace(/"/g, '""')}"`,
         ].join(",");
       }),
@@ -168,40 +202,62 @@ export default function ConsumptionEntryTab() {
   };
 
   // Save entry to backend
+  // FIX: Wrap in try/catch so mutateAsync errors don't become unhandled rejections.
+  // Reason Code is OPTIONAL -- only Qty > 0 is needed to save a row.
   const handleSave = async () => {
-    const rows = (items as ConsumptionItem[])
-      .filter((item) => {
-        const key = makeKey(item);
-        const n = Number(qtys[key] ?? "0");
-        return !Number.isNaN(n) && n > 0;
-      })
-      .map((item) => {
-        const key = makeKey(item);
-        return {
-          itemCode: item.notes || item.itemCode || "",
-          name: item.name,
-          unit: item.unit,
-          qty: Number(qtys[key] ?? "0"),
-          department: item.department,
-        };
-      });
+    try {
+      const allItems = items as ConsumptionItem[];
 
-    if (rows.length === 0) {
-      toast.error("Save karne ke liye pehle kuch qty bharein");
-      return;
+      // If items haven't loaded yet, tell the user to wait
+      if (allItems.length === 0) {
+        toast.error("Items abhi load ho rahe hain, please thoda wait karein");
+        return;
+      }
+
+      // Build rows from ALL items (across all departments) where qty > 0
+      // Reason Code (CONS/WASTAGE) is optional -- empty string is perfectly fine
+      const rows = allItems
+        .filter((item) => {
+          const key = makeKey(item);
+          const n = Number(qtys[key] ?? "0");
+          return !Number.isNaN(n) && n > 0;
+        })
+        .map((item) => {
+          const key = makeKey(item);
+          return {
+            itemCode: item.notes || item.itemCode || "",
+            name: item.name,
+            unit: item.unit,
+            qty: Number(qtys[key] ?? "0"),
+            department: item.department,
+            reasonCode: reasonCodes[key] || "", // empty string is OK, not required
+          };
+        });
+
+      if (rows.length === 0) {
+        toast.error("Koi bhi qty nahi bhari -- pehle kuch qty bharein");
+        return;
+      }
+
+      const now = new Date();
+      const entry: SavedEntry = {
+        id: `${Date.now()}`,
+        date: now.toISOString().slice(0, 10),
+        savedAt: now.toISOString(),
+        department: deptFilter,
+        savedBy: role ?? "worker",
+        rows,
+      };
+
+      // mutateAsync throws on error -- the mutation's onError already shows a toast,
+      // so we just catch here to prevent unhandled promise rejection
+      await saveEntry.mutateAsync(entry);
+      // onSuccess in useSaveEntry shows "Saved!" toast, so no extra toast needed here
+    } catch (err) {
+      // The useSaveEntry onError already shows toast.error("Save karne mein error aaya")
+      // Just log for debugging; avoid double-toasting
+      console.error("[ConsumptionEntryTab] handleSave error:", err);
     }
-
-    const now = new Date();
-    const entry: SavedEntry = {
-      id: `${Date.now()}`,
-      date: now.toISOString().slice(0, 10),
-      savedAt: now.toISOString(),
-      department: deptFilter,
-      savedBy: role ?? "worker",
-      rows,
-    };
-
-    await saveEntry.mutateAsync(entry);
   };
 
   // Export a saved history entry
@@ -210,19 +266,21 @@ export default function ConsumptionEntryTab() {
       "Date",
       "Item Code",
       "Item Name",
-      "Unit",
       "Qty",
+      "Unit",
+      "Reason Code",
       "Department",
     ];
     const csvRows = [
       headers.join(","),
-      ...entry.rows.map((r) =>
+      ...(entry.rows as unknown as RowWithReason[]).map((r) =>
         [
           entry.date,
           `"${r.itemCode.replace(/"/g, '""')}"`,
           `"${r.name.replace(/"/g, '""')}"`,
-          `"${r.unit.replace(/"/g, '""')}"`,
           r.qty,
+          `"${r.unit.replace(/"/g, '""')}"`,
+          `"${r.reasonCode || ""}"`,
           `"${r.department.replace(/"/g, '""')}"`,
         ].join(","),
       ),
@@ -240,7 +298,11 @@ export default function ConsumptionEntryTab() {
   };
 
   const handleDeleteHistory = async (id: string) => {
-    await deleteEntry.mutateAsync(id);
+    try {
+      await deleteEntry.mutateAsync(id);
+    } catch (err) {
+      console.error("[ConsumptionEntryTab] handleDeleteHistory error:", err);
+    }
   };
 
   if (isLoading) {
@@ -390,42 +452,64 @@ export default function ConsumptionEntryTab() {
                             <TableHead className="text-xs">#</TableHead>
                             <TableHead className="text-xs">Item Code</TableHead>
                             <TableHead className="text-xs">Item Name</TableHead>
-                            <TableHead className="text-xs">Unit</TableHead>
                             <TableHead className="text-xs">Qty</TableHead>
+                            <TableHead className="text-xs">Unit</TableHead>
+                            <TableHead className="text-xs">
+                              Reason Code
+                            </TableHead>
                             <TableHead className="text-xs">
                               Department
                             </TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {entry.rows.map((r, i) => (
-                            // biome-ignore lint/suspicious/noArrayIndexKey: stable within saved entry
-                            <TableRow key={i}>
-                              <TableCell className="text-xs text-muted-foreground">
-                                {i + 1}
-                              </TableCell>
-                              <TableCell className="font-mono text-xs text-muted-foreground">
-                                {r.itemCode || "—"}
-                              </TableCell>
-                              <TableCell className="text-sm font-medium">
-                                {r.name}
-                              </TableCell>
-                              <TableCell className="text-sm text-muted-foreground">
-                                {r.unit || "—"}
-                              </TableCell>
-                              <TableCell className="font-semibold text-sm text-primary">
-                                {r.qty.toLocaleString()}
-                              </TableCell>
-                              <TableCell>
-                                <Badge
-                                  variant="secondary"
-                                  className="text-xs font-normal"
-                                >
-                                  {r.department}
-                                </Badge>
-                              </TableCell>
-                            </TableRow>
-                          ))}
+                          {(entry.rows as unknown as RowWithReason[]).map(
+                            (r, i) => (
+                              // biome-ignore lint/suspicious/noArrayIndexKey: stable within saved entry
+                              <TableRow key={i}>
+                                <TableCell className="text-xs text-muted-foreground">
+                                  {i + 1}
+                                </TableCell>
+                                <TableCell className="font-mono text-xs text-muted-foreground">
+                                  {r.itemCode || "—"}
+                                </TableCell>
+                                <TableCell className="text-sm font-medium">
+                                  {r.name}
+                                </TableCell>
+                                <TableCell className="font-semibold text-sm text-primary">
+                                  {r.qty.toLocaleString()}
+                                </TableCell>
+                                <TableCell className="text-sm text-muted-foreground">
+                                  {r.unit || "—"}
+                                </TableCell>
+                                <TableCell>
+                                  {r.reasonCode ? (
+                                    <Badge
+                                      className={`text-xs font-semibold ${
+                                        r.reasonCode === "CONS"
+                                          ? "bg-blue-500/10 text-blue-600 border-blue-500/30 border"
+                                          : "bg-orange-500/10 text-orange-600 border-orange-500/30 border"
+                                      }`}
+                                    >
+                                      {r.reasonCode}
+                                    </Badge>
+                                  ) : (
+                                    <span className="text-muted-foreground/40 text-xs">
+                                      —
+                                    </span>
+                                  )}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-xs font-normal"
+                                  >
+                                    {r.department}
+                                  </Badge>
+                                </TableCell>
+                              </TableRow>
+                            ),
+                          )}
                         </TableBody>
                       </Table>
                     </div>
@@ -452,7 +536,7 @@ export default function ConsumptionEntryTab() {
               Consumption Entry
             </h2>
             <p className="text-xs text-muted-foreground leading-tight mt-0.5">
-              Department select karein, qty bharein, save/export karein
+              Qty bharein (Reason Code optional hai), Save/Export karein
             </p>
           </div>
           {filledCount > 0 && (
@@ -515,8 +599,28 @@ export default function ConsumptionEntryTab() {
         </div>
       </div>
 
-      {/* Filters row: Department + Search */}
-      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+      {/* Filters row: Reason Code + Department + Search */}
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center flex-wrap">
+        {/* Reason Code Filter */}
+        <Select
+          value={reasonFilter}
+          onValueChange={(val) =>
+            setReasonFilter(val as "ALL" | "CONS" | "WASTAGE")
+          }
+        >
+          <SelectTrigger
+            className="w-full sm:w-40"
+            data-ocid="entry.reason_filter_select"
+          >
+            <SelectValue placeholder="All Reasons" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All Reasons</SelectItem>
+            <SelectItem value="CONS">CONS</SelectItem>
+            <SelectItem value="WASTAGE">WASTAGE</SelectItem>
+          </SelectContent>
+        </Select>
+
         {/* Department Filter */}
         <Select
           value={deptFilter}
@@ -588,11 +692,17 @@ export default function ConsumptionEntryTab() {
                 <TableHead className="text-xs font-semibold text-muted-foreground min-w-44">
                   Item Name
                 </TableHead>
+                <TableHead className="text-xs font-semibold text-muted-foreground w-24">
+                  Qty
+                </TableHead>
                 <TableHead className="text-xs font-semibold text-muted-foreground w-20">
                   Unit
                 </TableHead>
-                <TableHead className="text-xs font-semibold text-muted-foreground w-28">
-                  Qty
+                <TableHead className="text-xs font-semibold text-muted-foreground w-36">
+                  Reason Code
+                  <span className="ml-1 text-muted-foreground/50 font-normal">
+                    (optional)
+                  </span>
                 </TableHead>
                 <TableHead className="text-xs font-semibold text-muted-foreground min-w-32">
                   Department
@@ -602,19 +712,23 @@ export default function ConsumptionEntryTab() {
             <TableBody>
               {filteredItems.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6}>
+                  <TableCell colSpan={7}>
                     <div
                       data-ocid="entry.empty_state"
                       className="flex flex-col items-center justify-center py-16 text-muted-foreground"
                     >
                       <ClipboardList className="h-10 w-10 mb-3 opacity-30" />
                       <p className="font-medium">
-                        {search || deptFilter !== "ALL"
+                        {search ||
+                        deptFilter !== "ALL" ||
+                        reasonFilter !== "ALL"
                           ? "Koi item nahi mila"
                           : "Koi item nahi hai"}
                       </p>
                       <p className="text-sm mt-1">
-                        {search || deptFilter !== "ALL"
+                        {search ||
+                        deptFilter !== "ALL" ||
+                        reasonFilter !== "ALL"
                           ? "Filter ya search change karein"
                           : "Pehle Items tab mein items add karein"}
                       </p>
@@ -625,6 +739,7 @@ export default function ConsumptionEntryTab() {
                 filteredItems.map((item, idx) => {
                   const key = makeKey(item);
                   const qtyVal = qtys[key] ?? "";
+                  const reasonVal = reasonCodes[key] ?? "";
                   const hasQty =
                     qtyVal !== "" &&
                     !Number.isNaN(Number(qtyVal)) &&
@@ -661,9 +776,6 @@ export default function ConsumptionEntryTab() {
                       >
                         {item.name}
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {item.unit || "—"}
-                      </TableCell>
                       <TableCell>
                         <Input
                           type="number"
@@ -671,13 +783,41 @@ export default function ConsumptionEntryTab() {
                           placeholder="0"
                           value={qtyVal}
                           onChange={(e) => handleQtyChange(key, e.target.value)}
-                          className={`h-8 w-24 text-sm px-2 ${
+                          className={`h-8 w-20 text-sm px-2 ${
                             hasQty
                               ? "border-primary/50 bg-primary/5 font-semibold text-primary focus-visible:ring-primary/40"
                               : ""
                           }`}
                           data-ocid={`entry.qty_input.${idx + 1}`}
                         />
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {item.unit || "—"}
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={reasonVal}
+                          onValueChange={(val) =>
+                            handleReasonChange(key, val as ReasonCode)
+                          }
+                        >
+                          <SelectTrigger
+                            className={`h-8 w-32 text-xs ${
+                              reasonVal === "CONS"
+                                ? "border-blue-500/50 bg-blue-500/5 text-blue-700 dark:text-blue-400"
+                                : reasonVal === "WASTAGE"
+                                  ? "border-orange-500/50 bg-orange-500/5 text-orange-700 dark:text-orange-400"
+                                  : ""
+                            }`}
+                            data-ocid={`entry.reason_select.${idx + 1}`}
+                          >
+                            <SelectValue placeholder="Select..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="CONS">CONS</SelectItem>
+                            <SelectItem value="WASTAGE">WASTAGE</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                       <TableCell>
                         <Badge
@@ -698,7 +838,7 @@ export default function ConsumptionEntryTab() {
 
       {/* Footer hint */}
       <p className="text-xs text-muted-foreground text-center">
-        Qty bharein, phir{" "}
+        Qty bharein (Reason Code optional hai), phir{" "}
         <button
           type="button"
           onClick={handleSave}

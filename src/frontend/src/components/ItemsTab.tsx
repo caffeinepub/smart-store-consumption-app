@@ -44,16 +44,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Check,
-  Loader2,
-  Package,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Loader2, Package, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import type { ConsumptionItem } from "../backend.d.ts";
 import { useAuth } from "../context/AuthContext";
@@ -62,7 +53,7 @@ import {
   useDeleteItem,
   useGetAllItems,
   useGetDepartments,
-  useUpdateItemQuantity,
+  useUpdateItem,
 } from "../hooks/useQueries";
 
 const MONTHS = [
@@ -100,7 +91,7 @@ const PAGE_SIZE = 50;
 const currentYear = new Date().getFullYear();
 const YEARS = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
 
-type AddItemForm = {
+type ItemForm = {
   itemCode: string;
   name: string;
   department: string;
@@ -118,7 +109,7 @@ export default function ItemsTab() {
   const { data: departments = [] } = useGetDepartments();
   const addItem = useAddItem();
   const deleteItem = useDeleteItem();
-  const updateQty = useUpdateItemQuantity();
+  const updateItem = useUpdateItem();
 
   const [search, setSearch] = useState("");
   const [filterDept, setFilterDept] = useState("all");
@@ -132,13 +123,20 @@ export default function ItemsTab() {
     department: string;
   } | null>(null);
 
-  const [editingRow, setEditingRow] = useState<{
-    name: string;
-    department: string;
-  } | null>(null);
-  const [editQty, setEditQty] = useState("");
+  // Edit dialog state
+  const [editTarget, setEditTarget] = useState<ConsumptionItem | null>(null);
+  const [editForm, setEditForm] = useState<ItemForm>({
+    itemCode: "",
+    name: "",
+    department: "",
+    unit: "",
+    quantity: "",
+    month: "",
+    year: "",
+    notes: "",
+  });
 
-  const [addForm, setAddForm] = useState<AddItemForm>({
+  const [addForm, setAddForm] = useState<ItemForm>({
     itemCode: "",
     name: "",
     department: "",
@@ -214,22 +212,39 @@ export default function ItemsTab() {
     });
   };
 
-  const handleStartEdit = (item: ConsumptionItem) => {
-    setEditingRow({ name: item.name, department: item.department });
-    setEditQty(String(item.quantity));
+  const handleOpenEdit = (item: ConsumptionItem) => {
+    setEditTarget(item);
+    setEditForm({
+      itemCode: item.itemCode || "",
+      name: item.name,
+      department: item.department,
+      unit: item.unit || "",
+      quantity: String(item.quantity),
+      month: String(item.month),
+      year: String(item.year),
+      notes: item.notes || "",
+    });
   };
 
   const handleSaveEdit = async () => {
-    if (!editingRow) return;
-    await updateQty.mutateAsync({
-      name: editingRow.name,
-      department: editingRow.department,
-      newQuantity: Number(editQty) || 0,
+    if (!editTarget || !editForm.name.trim() || !editForm.department.trim())
+      return;
+    await updateItem.mutateAsync({
+      oldName: editTarget.name,
+      oldDepartment: editTarget.department,
+      updatedItem: {
+        itemCode: editForm.itemCode.trim(),
+        name: editForm.name.trim(),
+        department: editForm.department.trim(),
+        unit: editForm.unit.trim(),
+        quantity: Number(editForm.quantity) || 0,
+        month: Number(editForm.month),
+        year: Number(editForm.year),
+        notes: editForm.notes.trim(),
+      },
     });
-    setEditingRow(null);
+    setEditTarget(null);
   };
-
-  const handleCancelEdit = () => setEditingRow(null);
 
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
@@ -438,9 +453,6 @@ export default function ItemsTab() {
               ) : (
                 currentPageItems.map((item, idx) => {
                   const rowNum = (page - 1) * PAGE_SIZE + idx + 1;
-                  const isEditing =
-                    editingRow?.name === item.name &&
-                    editingRow?.department === item.department;
 
                   return (
                     <TableRow
@@ -473,42 +485,9 @@ export default function ItemsTab() {
                         {item.unit}
                       </TableCell>
                       <TableCell>
-                        {isEditing ? (
-                          <div className="flex items-center gap-1">
-                            <Input
-                              type="number"
-                              value={editQty}
-                              onChange={(e) => setEditQty(e.target.value)}
-                              className="h-7 w-20 text-sm px-2"
-                              autoFocus
-                            />
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-6 w-6 text-green-600"
-                              onClick={handleSaveEdit}
-                              disabled={updateQty.isPending}
-                            >
-                              {updateQty.isPending ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Check className="h-3 w-3" />
-                              )}
-                            </Button>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-6 w-6 text-destructive"
-                              onClick={handleCancelEdit}
-                            >
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        ) : (
-                          <span className="font-mono font-semibold text-sm">
-                            {Number(item.quantity).toLocaleString()}
-                          </span>
-                        )}
+                        <span className="font-mono font-semibold text-sm">
+                          {Number(item.quantity).toLocaleString()}
+                        </span>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {MONTH_ABBR[item.month - 1]} {item.year}
@@ -523,7 +502,7 @@ export default function ItemsTab() {
                               size="icon"
                               variant="ghost"
                               className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                              onClick={() => handleStartEdit(item)}
+                              onClick={() => handleOpenEdit(item)}
                               data-ocid="items.edit_button.1"
                             >
                               <Pencil className="h-3.5 w-3.5" />
@@ -601,6 +580,103 @@ export default function ItemsTab() {
           </PaginationContent>
         </Pagination>
       )}
+
+      {/* Edit Item Dialog — admin only */}
+      <Dialog
+        open={isAdmin && !!editTarget}
+        onOpenChange={(o) => !o && setEditTarget(null)}
+      >
+        <DialogContent className="max-w-md" data-ocid="edit_item.dialog">
+          <DialogHeader>
+            <DialogTitle className="font-display">Edit Item</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-itemcode">Item Code</Label>
+              <Input
+                id="edit-itemcode"
+                placeholder="e.g. RM40018"
+                value={editForm.itemCode}
+                onChange={(e) =>
+                  setEditForm((f) => ({ ...f, itemCode: e.target.value }))
+                }
+                data-ocid="edit_item.itemcode_input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-name">Item Name *</Label>
+              <Input
+                id="edit-name"
+                placeholder="Item ka naam"
+                value={editForm.name}
+                onChange={(e) =>
+                  setEditForm((f) => ({ ...f, name: e.target.value }))
+                }
+                data-ocid="edit_item.name_input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-dept">Department *</Label>
+              <Input
+                id="edit-dept"
+                placeholder="e.g. Bhatura"
+                value={editForm.department}
+                onChange={(e) =>
+                  setEditForm((f) => ({ ...f, department: e.target.value }))
+                }
+                data-ocid="edit_item.department_input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-unit">Unit</Label>
+              <Input
+                id="edit-unit"
+                placeholder="e.g. KGS, Pcs, Ltr"
+                value={editForm.unit}
+                onChange={(e) =>
+                  setEditForm((f) => ({ ...f, unit: e.target.value }))
+                }
+                data-ocid="edit_item.unit_input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-notes">Notes</Label>
+              <Input
+                id="edit-notes"
+                placeholder="Optional"
+                value={editForm.notes}
+                onChange={(e) =>
+                  setEditForm((f) => ({ ...f, notes: e.target.value }))
+                }
+                data-ocid="edit_item.notes_input"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEditTarget(null)}
+              data-ocid="edit_item.cancel_button"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveEdit}
+              disabled={
+                updateItem.isPending ||
+                !editForm.name.trim() ||
+                !editForm.department.trim()
+              }
+              data-ocid="edit_item.save_button"
+            >
+              {updateItem.isPending && (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              )}
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add Item Dialog — admin only */}
       <Dialog
@@ -767,13 +843,13 @@ export default function ItemsTab() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel data-ocid="add_item.cancel_button">
+            <AlertDialogCancel data-ocid="delete_item.cancel_button">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDeleteConfirm}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              data-ocid="add_item.confirm_button"
+              data-ocid="delete_item.confirm_button"
             >
               {deleteItem.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />

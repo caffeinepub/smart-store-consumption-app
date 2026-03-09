@@ -34,6 +34,7 @@ export interface SavedRow {
   'unit' : string,
   'itemCode' : string,
   'department' : string,
+  'reasonCode' : string,
 }
 export interface _SERVICE {
   'addItem' : ActorMethod<[ConsumptionItem], undefined>,
