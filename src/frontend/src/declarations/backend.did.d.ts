@@ -30,11 +30,11 @@ export interface SavedEntry {
 }
 export interface SavedRow {
   'qty' : number,
+  'reasonCode' : string,
   'name' : string,
   'unit' : string,
   'itemCode' : string,
   'department' : string,
-  'reasonCode' : string,
 }
 export interface _SERVICE {
   'addItem' : ActorMethod<[ConsumptionItem], undefined>,
@@ -51,6 +51,7 @@ export interface _SERVICE {
   'saveEntry' : ActorMethod<[SavedEntry], undefined>,
   'searchItemsByCode' : ActorMethod<[string], Array<ConsumptionItem>>,
   'searchItemsByName' : ActorMethod<[string], Array<ConsumptionItem>>,
+  'updateItem' : ActorMethod<[string, string, ConsumptionItem], undefined>,
   'updateItemQuantity' : ActorMethod<[string, string, number], undefined>,
 }
 export declare const idlService: IDL.ServiceClass;

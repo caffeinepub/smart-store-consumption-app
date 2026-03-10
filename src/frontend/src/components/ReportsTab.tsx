@@ -1,6 +1,5 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -30,32 +29,11 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ConsumptionItem } from "../backend.d.ts";
-import { useGetAllItems, useGetDepartments } from "../hooks/useQueries";
-
-// ---- Saved Entry types (from ConsumptionEntryTab) ----
-interface SavedEntryRow {
-  itemCode: string;
-  name: string;
-  unit: string;
-  qty: number;
-  department: string;
-}
-interface SavedEntry {
-  id: string;
-  date: string;
-  savedAt: string;
-  department: string;
-  rows: SavedEntryRow[];
-}
-const LS_KEY = "consumption_history_v1";
-function loadHistory(): SavedEntry[] {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
+import {
+  useGetAllEntries,
+  useGetAllItems,
+  useGetDepartments,
+} from "../hooks/useQueries";
 
 const MONTHS = [
   { value: "1", label: "January" },
@@ -72,26 +50,13 @@ const MONTHS = [
   { value: "12", label: "December" },
 ];
 
-const _MONTH_ABBR = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
-
 const currentYear = new Date().getFullYear();
 const YEARS = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
 
 function downloadCsv(filename: string, rows: string[][]) {
-  const csv = rows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
+  const csv = rows
+    .map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(","))
+    .join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -103,41 +68,81 @@ function downloadCsv(filename: string, rows: string[][]) {
   URL.revokeObjectURL(url);
 }
 
+// ---- Department Report (using saved entries, date-wise breakdown) ----
 function DepartmentReport() {
-  const { data: items = [], isLoading: itemsLoading } = useGetAllItems();
-  const { data: departments = [], isLoading: deptsLoading } =
-    useGetDepartments();
+  const { data: entries = [], isLoading } = useGetAllEntries();
   const [selectedDept, setSelectedDept] = useState("");
 
-  const reportRows = useMemo(() => {
-    if (!selectedDept) return [];
-    const filtered = (items as ConsumptionItem[]).filter(
-      (i) => i.department === selectedDept,
-    );
-    const itemMap = new Map<string, { unit: string; total: number }>();
-    for (const i of filtered) {
-      const curr = itemMap.get(i.name);
-      if (curr) {
-        curr.total += Number(i.quantity);
-      } else {
-        itemMap.set(i.name, { unit: i.unit, total: Number(i.quantity) });
+  // Extract unique departments from saved entries
+  const departments = useMemo(() => {
+    const set = new Set<string>();
+    for (const entry of entries) {
+      for (const row of entry.rows) {
+        if (row.department) set.add(row.department);
       }
     }
-    return Array.from(itemMap.entries())
-      .map(([name, { unit, total }]) => ({ name, unit, total }))
-      .sort((a, b) => b.total - a.total);
-  }, [items, selectedDept]);
+    return Array.from(set).sort();
+  }, [entries]);
 
-  const grandTotal = reportRows.reduce((s, r) => s + r.total, 0);
+  // All rows for selected department, with entry date
+  const deptRows = useMemo(() => {
+    if (!selectedDept) return [];
+    const rows: {
+      date: string;
+      itemCode: string;
+      name: string;
+      qty: number;
+      unit: string;
+    }[] = [];
+    for (const entry of entries) {
+      for (const r of entry.rows) {
+        if (r.department === selectedDept) {
+          rows.push({
+            date: entry.date,
+            itemCode: r.itemCode,
+            name: r.name,
+            qty: r.qty,
+            unit: r.unit,
+          });
+        }
+      }
+    }
+    return rows;
+  }, [entries, selectedDept]);
+
+  // Group by date
+  const groupedByDate = useMemo(() => {
+    const map = new Map<string, typeof deptRows>();
+    for (const r of deptRows) {
+      const arr = map.get(r.date) || [];
+      arr.push(r);
+      map.set(r.date, arr);
+    }
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [deptRows]);
+
+  const grandTotal = deptRows.reduce((s, r) => s + r.qty, 0);
 
   const handleExport = () => {
-    const header = ["Item Name", "Unit", "Total Quantity"];
-    const rows = reportRows.map((r) => [r.name, r.unit, String(r.total)]);
-    rows.push(["GRAND TOTAL", "", String(grandTotal)]);
-    downloadCsv(`${selectedDept}-report.csv`, [header, ...rows]);
+    const header = ["Date", "Item Code", "Item Name", "Qty", "Unit"];
+    const rows: string[][] = [];
+    for (const [date, dateRows] of groupedByDate) {
+      for (const r of dateRows) {
+        rows.push([date, r.itemCode, r.name, String(r.qty), r.unit]);
+      }
+      rows.push([
+        `${date} Subtotal`,
+        "",
+        "",
+        String(dateRows.reduce((s, r) => s + r.qty, 0)),
+        "",
+      ]);
+    }
+    rows.push(["GRAND TOTAL", "", "", String(grandTotal), ""]);
+    downloadCsv(`${selectedDept}-dept-report.csv`, [header, ...rows]);
   };
 
-  if (itemsLoading || deptsLoading) {
+  if (isLoading) {
     return <Skeleton className="h-64 w-full" />;
   }
 
@@ -159,7 +164,7 @@ function DepartmentReport() {
             </SelectContent>
           </Select>
         </div>
-        {reportRows.length > 0 && (
+        {deptRows.length > 0 && (
           <Button
             variant="outline"
             onClick={handleExport}
@@ -172,70 +177,6 @@ function DepartmentReport() {
         )}
       </div>
 
-      {selectedDept && (
-        <div className="rounded-lg border border-border overflow-hidden bg-card">
-          <div className="px-4 py-3 bg-muted/50 border-b flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-primary" />
-              <span className="font-semibold text-sm">{selectedDept}</span>
-            </div>
-            <Badge variant="secondary">{reportRows.length} items</Badge>
-          </div>
-          {reportRows.length === 0 ? (
-            <div
-              data-ocid="reports.empty_state"
-              className="py-12 text-center text-muted-foreground"
-            >
-              <FileText className="h-8 w-8 mx-auto mb-2 opacity-30" />
-              <p>No items found for this department</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="text-xs font-semibold text-muted-foreground">
-                      Item Name
-                    </TableHead>
-                    <TableHead className="text-xs font-semibold text-muted-foreground w-24">
-                      Unit
-                    </TableHead>
-                    <TableHead className="text-xs font-semibold text-muted-foreground w-32 text-right">
-                      Total Qty
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {reportRows.map((row) => (
-                    <TableRow key={row.name} className="hover:bg-muted/30">
-                      <TableCell className="font-medium text-sm">
-                        {row.name}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {row.unit}
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-semibold text-sm">
-                        {row.total.toLocaleString()}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-                <TableFooter>
-                  <TableRow className="bg-muted/70 font-bold">
-                    <TableCell colSpan={2} className="font-semibold">
-                      Grand Total
-                    </TableCell>
-                    <TableCell className="text-right font-mono font-bold text-primary">
-                      {grandTotal.toLocaleString()}
-                    </TableCell>
-                  </TableRow>
-                </TableFooter>
-              </Table>
-            </div>
-          )}
-        </div>
-      )}
-
       {!selectedDept && (
         <div
           data-ocid="reports.empty_state"
@@ -243,6 +184,138 @@ function DepartmentReport() {
         >
           <Building2 className="h-10 w-10 mx-auto mb-3 opacity-30" />
           <p className="font-medium">Select a department to view its report</p>
+          <p className="text-sm mt-1 text-muted-foreground/70">
+            Report shows date-wise item consumption from saved entries
+          </p>
+        </div>
+      )}
+
+      {selectedDept && deptRows.length === 0 && (
+        <div
+          data-ocid="reports.empty_state"
+          className="py-12 text-center text-muted-foreground"
+        >
+          <FileText className="h-8 w-8 mx-auto mb-2 opacity-30" />
+          <p>
+            No saved entries found for <strong>{selectedDept}</strong>
+          </p>
+          <p className="text-sm mt-1">Entry tab mein save karo pehle</p>
+        </div>
+      )}
+
+      {selectedDept && groupedByDate.length > 0 && (
+        <div className="space-y-4">
+          {/* Summary bar */}
+          <div className="flex flex-wrap gap-3">
+            <div className="bg-primary/10 rounded-lg px-4 py-2 flex items-center gap-2">
+              <Building2 className="h-4 w-4 text-primary" />
+              <span className="text-sm font-semibold">{selectedDept}</span>
+            </div>
+            <div className="bg-muted rounded-lg px-4 py-2 flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">
+                {groupedByDate.length} dates
+              </span>
+            </div>
+            <div className="bg-muted rounded-lg px-4 py-2 flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-mono font-semibold text-muted-foreground">
+                Total: {grandTotal.toLocaleString()}
+              </span>
+            </div>
+          </div>
+
+          {groupedByDate.map(([date, dateRows]) => {
+            const dateTotal = dateRows.reduce((s, r) => s + r.qty, 0);
+            return (
+              <div
+                key={date}
+                className="rounded-lg border border-border overflow-hidden bg-card"
+              >
+                <div className="px-4 py-3 bg-muted/50 border-b flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="h-4 w-4 text-primary" />
+                    <span className="font-semibold text-sm">{date}</span>
+                    <Badge variant="secondary" className="text-xs">
+                      {dateRows.length} items
+                    </Badge>
+                  </div>
+                  <span className="font-mono text-sm font-bold text-primary">
+                    {dateTotal.toLocaleString()}
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent bg-muted/20">
+                        <TableHead className="text-xs font-semibold text-muted-foreground w-10">
+                          #
+                        </TableHead>
+                        <TableHead className="text-xs font-semibold text-muted-foreground">
+                          Item Code
+                        </TableHead>
+                        <TableHead className="text-xs font-semibold text-muted-foreground">
+                          Item Name
+                        </TableHead>
+                        <TableHead className="text-xs font-semibold text-muted-foreground w-28 text-right">
+                          Qty
+                        </TableHead>
+                        <TableHead className="text-xs font-semibold text-muted-foreground w-20">
+                          Unit
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {dateRows.map((r, i) => (
+                        // biome-ignore lint/suspicious/noArrayIndexKey: stable within date group
+                        <TableRow key={i} className="hover:bg-muted/30">
+                          <TableCell className="text-xs text-muted-foreground">
+                            {i + 1}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">
+                            {r.itemCode || "—"}
+                          </TableCell>
+                          <TableCell className="font-medium text-sm">
+                            {r.name}
+                          </TableCell>
+                          <TableCell className="text-right font-mono font-semibold text-sm text-primary">
+                            {r.qty.toLocaleString()}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {r.unit || "—"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                    <TableFooter>
+                      <TableRow className="bg-muted/70">
+                        <TableCell
+                          colSpan={3}
+                          className="font-semibold text-sm"
+                        >
+                          {date} Total
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-primary">
+                          {dateTotal.toLocaleString()}
+                        </TableCell>
+                        <TableCell />
+                      </TableRow>
+                    </TableFooter>
+                  </Table>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Grand Total */}
+          <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 flex justify-between items-center">
+            <span className="font-display font-bold text-sm">
+              Grand Total — {selectedDept}
+            </span>
+            <span className="font-mono font-bold text-primary text-lg">
+              {grandTotal.toLocaleString()}
+            </span>
+          </div>
         </div>
       )}
     </div>
@@ -263,7 +336,6 @@ function MonthlyReport() {
       (i) => i.month === month && i.year === year,
     );
 
-    // Group by department
     const deptMap = new Map<string, ConsumptionItem[]>();
     for (const i of filtered) {
       const arr = deptMap.get(i.department) || [];
@@ -373,7 +445,6 @@ function MonthlyReport() {
         </div>
       ) : (
         <div className="space-y-4">
-          {/* Summary */}
           <div className="flex flex-wrap gap-3">
             <div className="bg-primary/10 rounded-lg px-4 py-2.5 flex items-center gap-2">
               <Calendar className="h-4 w-4 text-primary" />
@@ -396,7 +467,6 @@ function MonthlyReport() {
             </div>
           </div>
 
-          {/* Tables per department */}
           {reportData.groups.map((group) => (
             <div
               key={group.department}
@@ -470,7 +540,6 @@ function MonthlyReport() {
             </div>
           ))}
 
-          {/* Grand Total Row */}
           <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 flex justify-between items-center">
             <span className="font-display font-bold text-sm">Grand Total</span>
             <span className="font-mono font-bold text-primary text-lg">
@@ -483,25 +552,25 @@ function MonthlyReport() {
   );
 }
 
-// ---- History-based Reports ----
+// ---- Saved Entries Report (from backend) ----
 function HistorySavedReport() {
-  const [history] = useState<SavedEntry[]>(() => loadHistory());
+  const { data: entries = [], isLoading } = useGetAllEntries();
   const [filterDept, setFilterDept] = useState("ALL");
   const [filterMonth, setFilterMonth] = useState("all");
   const [filterYear, setFilterYear] = useState(
     String(new Date().getFullYear()),
   );
 
-  // Collect all unique departments from history
+  // Collect all unique departments from entries
   const historyDepts = useMemo(() => {
     const set = new Set<string>();
-    for (const entry of history) {
+    for (const entry of entries) {
       for (const r of entry.rows) set.add(r.department);
     }
     return Array.from(set).sort();
-  }, [history]);
+  }, [entries]);
 
-  // Flatten all rows with date info, then filter
+  // Flatten all rows with date info
   const allRows = useMemo(() => {
     const rows: {
       date: string;
@@ -512,17 +581,28 @@ function HistorySavedReport() {
       unit: string;
       qty: number;
       department: string;
+      reasonCode: string;
     }[] = [];
-    for (const entry of history) {
+    for (const entry of entries) {
       const d = new Date(entry.date);
       const year = String(d.getFullYear());
       const month = String(d.getMonth() + 1);
       for (const r of entry.rows) {
-        rows.push({ date: entry.date, year, month, ...r });
+        rows.push({
+          date: entry.date,
+          year,
+          month,
+          itemCode: r.itemCode,
+          name: r.name,
+          unit: r.unit,
+          qty: r.qty,
+          department: r.department,
+          reasonCode: (r as any).reasonCode || "",
+        });
       }
     }
     return rows;
-  }, [history]);
+  }, [entries]);
 
   const filteredRows = useMemo(() => {
     let result = allRows;
@@ -555,6 +635,7 @@ function HistorySavedReport() {
       "Item Name",
       "Unit",
       "Qty",
+      "Reason Code",
       "Department",
     ];
     const rows = filteredRows.map((r) => [
@@ -563,9 +644,10 @@ function HistorySavedReport() {
       r.name,
       r.unit,
       String(r.qty),
+      r.reasonCode || "",
       r.department,
     ]);
-    rows.push(["GRAND TOTAL", "", "", "", String(grandTotal), ""]);
+    rows.push(["GRAND TOTAL", "", "", "", String(grandTotal), "", ""]);
     const monthLabel =
       filterMonth !== "all"
         ? MONTHS.find((m) => m.value === filterMonth)?.label || filterMonth
@@ -576,7 +658,16 @@ function HistorySavedReport() {
     );
   };
 
-  if (history.length === 0) {
+  if (isLoading) {
+    return (
+      <div className="space-y-3" data-ocid="reports.loading_state">
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (entries.length === 0) {
     return (
       <div
         data-ocid="reports.empty_state"
@@ -748,62 +839,64 @@ function HistorySavedReport() {
                           Qty
                         </TableHead>
                         <TableHead className="text-xs font-semibold text-muted-foreground">
+                          Reason Code
+                        </TableHead>
+                        <TableHead className="text-xs font-semibold text-muted-foreground">
                           Department
                         </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {deptGroups.map(([dept, deptRows]) => (
-                        <>
-                          {deptRows.map((r, i) => (
-                            <TableRow
-                              key={`${r.itemCode}-${r.name}-${i}`}
-                              className="hover:bg-muted/30"
-                            >
-                              <TableCell className="text-xs text-muted-foreground">
-                                {i + 1}
-                              </TableCell>
-                              <TableCell className="font-mono text-xs text-muted-foreground">
-                                {r.itemCode || "—"}
-                              </TableCell>
-                              <TableCell className="font-medium text-sm">
-                                {r.name}
-                              </TableCell>
-                              <TableCell className="text-sm text-muted-foreground">
-                                {r.unit || "—"}
-                              </TableCell>
-                              <TableCell className="text-right font-mono font-semibold text-sm text-primary">
-                                {r.qty.toLocaleString()}
-                              </TableCell>
-                              <TableCell>
-                                <Badge
-                                  variant="secondary"
-                                  className="text-xs font-normal"
-                                >
-                                  {r.department}
-                                </Badge>
-                              </TableCell>
-                            </TableRow>
-                          ))}
+                      {deptGroups.map(([_dept, deptRows]) =>
+                        deptRows.map((r, i) => (
                           <TableRow
-                            key={`subtotal-${dept}`}
-                            className="bg-muted/30"
+                            key={`${r.itemCode}-${r.name}-${i}`}
+                            className="hover:bg-muted/30"
                           >
-                            <TableCell
-                              colSpan={4}
-                              className="text-xs font-semibold text-muted-foreground pl-4"
-                            >
-                              {dept} Subtotal
+                            <TableCell className="text-xs text-muted-foreground">
+                              {i + 1}
                             </TableCell>
-                            <TableCell className="text-right font-mono font-bold text-sm">
-                              {deptRows
-                                .reduce((s, r) => s + r.qty, 0)
-                                .toLocaleString()}
+                            <TableCell className="font-mono text-xs text-muted-foreground">
+                              {r.itemCode || "—"}
                             </TableCell>
-                            <TableCell />
+                            <TableCell className="font-medium text-sm">
+                              {r.name}
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {r.unit || "—"}
+                            </TableCell>
+                            <TableCell className="text-right font-mono font-semibold text-sm text-primary">
+                              {r.qty.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {r.reasonCode ? (
+                                <Badge
+                                  variant="outline"
+                                  className={`text-xs font-semibold ${
+                                    r.reasonCode === "WASTAGE"
+                                      ? "border-orange-400/50 text-orange-600 bg-orange-50 dark:bg-orange-950/20"
+                                      : "border-blue-400/50 text-blue-600 bg-blue-50 dark:bg-blue-950/20"
+                                  }`}
+                                >
+                                  {r.reasonCode}
+                                </Badge>
+                              ) : (
+                                <span className="text-muted-foreground/40">
+                                  —
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="secondary"
+                                className="text-xs font-normal"
+                              >
+                                {r.department}
+                              </Badge>
+                            </TableCell>
                           </TableRow>
-                        </>
-                      ))}
+                        )),
+                      )}
                     </TableBody>
                     <TableFooter>
                       <TableRow className="bg-muted/70">
@@ -816,6 +909,7 @@ function HistorySavedReport() {
                         <TableCell className="text-right font-mono font-bold text-primary">
                           {dateTotal.toLocaleString()}
                         </TableCell>
+                        <TableCell />
                         <TableCell />
                       </TableRow>
                     </TableFooter>

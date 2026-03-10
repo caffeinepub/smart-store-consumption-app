@@ -7,8 +7,10 @@ import Set "mo:core/Set";
 import Iter "mo:core/Iter";
 import Runtime "mo:core/Runtime";
 
+
+
 actor {
-  // Consumption Items
+  // ---- Consumption Items ----
   type ConsumptionItem = {
     itemCode : Text;
     name : Text;
@@ -110,28 +112,6 @@ actor {
   };
 
   // ---- Saved Entries ----
-
-  // V1 type kept for stable storage compatibility with existing on-chain data.
-  // New entries are stored as V1 (reasonCode dropped).
-  // On read, V1 is upgraded to V2 (reasonCode injected as "").
-  type SavedRowV1 = {
-    itemCode : Text;
-    name : Text;
-    unit : Text;
-    qty : Float;
-    department : Text;
-  };
-
-  type SavedEntryV1 = {
-    id : Text;
-    date : Text;
-    savedAt : Text;
-    department : Text;
-    savedBy : Text;
-    rows : [SavedRowV1];
-  };
-
-  // V2 runtime type (with reasonCode) exposed to frontend
   type SavedRow = {
     itemCode : Text;
     name : Text;
@@ -150,63 +130,18 @@ actor {
     rows : [SavedRow];
   };
 
-  // Stable storage stays as V1 to remain compatible with existing on-chain data.
-  let savedEntries = Map.empty<Text, SavedEntryV1>();
+  let savedEntries = Map.empty<Text, SavedEntry>();
 
-  func upgradeRow(r : SavedRowV1) : SavedRow {
-    {
-      itemCode = r.itemCode;
-      name = r.name;
-      unit = r.unit;
-      qty = r.qty;
-      department = r.department;
-      reasonCode = "";
-    }
-  };
-
-  func upgradeEntry(e : SavedEntryV1) : SavedEntry {
-    {
-      id = e.id;
-      date = e.date;
-      savedAt = e.savedAt;
-      department = e.department;
-      savedBy = e.savedBy;
-      rows = e.rows.map(upgradeRow);
-    }
-  };
-
-  func downgradeRow(r : SavedRow) : SavedRowV1 {
-    {
-      itemCode = r.itemCode;
-      name = r.name;
-      unit = r.unit;
-      qty = r.qty;
-      department = r.department;
-      // reasonCode intentionally dropped for V1 storage
-    }
-  };
-
-  func downgradeEntry(e : SavedEntry) : SavedEntryV1 {
-    {
-      id = e.id;
-      date = e.date;
-      savedAt = e.savedAt;
-      department = e.department;
-      savedBy = e.savedBy;
-      rows = e.rows.map(downgradeRow);
-    }
-  };
-
-  func compareEntriesBySavedAtDesc(a : SavedEntryV1, b : SavedEntryV1) : Order.Order {
+  func compareEntriesBySavedAtDesc(a : SavedEntry, b : SavedEntry) : Order.Order {
     Text.compare(b.savedAt, a.savedAt);
   };
 
   public shared ({ caller }) func saveEntry(entry : SavedEntry) : async () {
-    savedEntries.add(entry.id, downgradeEntry(entry));
+    savedEntries.add(entry.id, entry);
   };
 
   public query ({ caller }) func getAllEntries() : async [SavedEntry] {
-    savedEntries.values().toArray().sort(compareEntriesBySavedAtDesc).map(upgradeEntry);
+    savedEntries.values().toArray().sort(compareEntriesBySavedAtDesc);
   };
 
   public shared ({ caller }) func deleteEntry(id : Text) : async () {

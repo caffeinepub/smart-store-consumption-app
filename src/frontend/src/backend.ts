@@ -109,6 +109,7 @@ export interface ConsumptionItem {
 }
 export interface SavedRow {
     qty: number;
+    reasonCode: string;
     name: string;
     unit: string;
     itemCode: string;

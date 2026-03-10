@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { ConsumptionItem, SavedEntry } from "../backend.d.ts";
+import type { ConsumptionItem, SavedEntry, SavedRow } from "../backend.d.ts";
 import { useAuth } from "../context/AuthContext";
 import {
   useDeleteEntry,
@@ -55,8 +55,10 @@ export default function ConsumptionEntryTab() {
   const deleteEntry = useDeleteEntry();
 
   const [qtys, setQtys] = useState<Record<string, string>>({});
+  const [reasonCodes, setReasonCodes] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("ALL");
+  const [reasonFilter, setReasonFilter] = useState("ALL");
   const [activeView, setActiveView] = useState<"entry" | "history">("entry");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -75,8 +77,13 @@ export default function ConsumptionEntryTab() {
           (item.notes || "").toLowerCase().includes(q),
       );
     }
+    if (reasonFilter !== "ALL") {
+      result = result.filter(
+        (item) => (reasonCodes[makeKey(item)] ?? "") === reasonFilter,
+      );
+    }
     return result;
-  }, [items, deptFilter, search]);
+  }, [items, deptFilter, search, reasonFilter, reasonCodes]);
 
   const filledCount = useMemo(
     () =>
@@ -102,6 +109,7 @@ export default function ConsumptionEntryTab() {
 
   const handleClearAll = () => {
     setQtys({});
+    setReasonCodes({});
   };
 
   const handleExport = () => {
@@ -119,20 +127,24 @@ export default function ConsumptionEntryTab() {
       "Item Name",
       "Qty",
       "Unit",
+      "Reason Code",
       "Department",
     ];
     const today = new Date().toISOString().slice(0, 10);
     const csvRows = [
       headers.join(","),
       ...rows.map((item) => {
-        const qty = qtys[makeKey(item)] ?? "0";
+        const key = makeKey(item);
+        const qty = qtys[key] ?? "0";
         const displayCode = item.notes || item.itemCode || "";
+        const rc = reasonCodes[key] ?? "";
         return [
           today,
           `"${displayCode.replace(/"/g, '""')}"`,
           `"${item.name.replace(/"/g, '""')}"`,
           qty,
           `"${item.unit.replace(/"/g, '""')}"`,
+          `"${rc}"`,
           `"${item.department.replace(/"/g, '""')}"`,
         ].join(",");
       }),
@@ -151,41 +163,50 @@ export default function ConsumptionEntryTab() {
   };
 
   const handleSave = async () => {
+    const allItems = items as ConsumptionItem[];
+    if (allItems.length === 0) {
+      toast.error("Items abhi load ho rahe hain, please thoda wait karein");
+      return;
+    }
+    const rows: SavedRow[] = allItems
+      .filter((item) => {
+        const n = Number(qtys[makeKey(item)] ?? "0");
+        return !Number.isNaN(n) && n > 0;
+      })
+      .map((item) => ({
+        itemCode: item.notes || item.itemCode || "",
+        name: item.name,
+        unit: item.unit,
+        qty: Number(qtys[makeKey(item)] ?? "0"),
+        department: item.department,
+        reasonCode:
+          reasonCodes[makeKey(item)] === "NONE"
+            ? ""
+            : (reasonCodes[makeKey(item)] ?? ""),
+      }));
+    if (rows.length === 0) {
+      toast.error("Koi bhi qty nahi bhari -- pehle kuch qty bharein");
+      return;
+    }
+    const now = new Date();
+    const entry: SavedEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      date: now.toISOString().slice(0, 10),
+      savedAt: now.toISOString(),
+      department: deptFilter === "ALL" ? "" : deptFilter,
+      savedBy: role ?? "worker",
+      rows,
+    };
     try {
-      const allItems = items as ConsumptionItem[];
-      if (allItems.length === 0) {
-        toast.error("Items abhi load ho rahe hain, please thoda wait karein");
-        return;
-      }
-      const rows = allItems
-        .filter((item) => {
-          const n = Number(qtys[makeKey(item)] ?? "0");
-          return !Number.isNaN(n) && n > 0;
-        })
-        .map((item) => ({
-          itemCode: item.notes || item.itemCode || "",
-          name: item.name,
-          unit: item.unit,
-          qty: Number(qtys[makeKey(item)] ?? "0"),
-          department: item.department,
-          reasonCode: "",
-        }));
-      if (rows.length === 0) {
-        toast.error("Koi bhi qty nahi bhari -- pehle kuch qty bharein");
-        return;
-      }
-      const now = new Date();
-      const entry: SavedEntry = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        date: now.toISOString().slice(0, 10),
-        savedAt: now.toISOString(),
-        department: deptFilter,
-        savedBy: role ?? "worker",
-        rows,
-      };
       await saveEntry.mutateAsync(entry);
+      // Clear qtys after successful save
+      setQtys({});
+      setReasonCodes({});
     } catch (err) {
       console.error("[ConsumptionEntryTab] handleSave error:", err);
+      const msg =
+        err instanceof Error ? err.message : "Save karne mein error aaya";
+      toast.error(msg);
     }
   };
 
@@ -196,6 +217,7 @@ export default function ConsumptionEntryTab() {
       "Item Name",
       "Qty",
       "Unit",
+      "Reason Code",
       "Department",
     ];
     const csvRows = [
@@ -207,6 +229,7 @@ export default function ConsumptionEntryTab() {
           `"${r.name.replace(/"/g, '""')}"`,
           r.qty,
           `"${r.unit.replace(/"/g, '""')}"`,
+          `"${r.reasonCode || ""}"`,
           `"${r.department.replace(/"/g, '""')}"`,
         ].join(","),
       ),
@@ -216,7 +239,7 @@ export default function ConsumptionEntryTab() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `consumption-${entry.date}-${entry.department === "ALL" ? "all" : entry.department}.csv`;
+    link.download = `consumption-${entry.date}-${entry.department || "all"}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -262,7 +285,7 @@ export default function ConsumptionEntryTab() {
             variant="outline"
             size="sm"
             onClick={() => setActiveView("entry")}
-            data-ocid="history.back_button"
+            data-ocid="entry.secondary_button"
           >
             ← Entry pe Wapas
           </Button>
@@ -303,9 +326,9 @@ export default function ConsumptionEntryTab() {
                       <div>
                         <p className="font-semibold text-sm">{entry.date}</p>
                         <p className="text-xs text-muted-foreground">
-                          {entry.department === "ALL"
-                            ? "All Departments"
-                            : entry.department}{" "}
+                          {entry.department
+                            ? entry.department
+                            : "All Departments"}{" "}
                           · {entry.rows.length} items ·{" "}
                           {new Date(entry.savedAt).toLocaleTimeString("en-IN", {
                             hour: "2-digit",
@@ -338,7 +361,7 @@ export default function ConsumptionEntryTab() {
                             expandedId === entry.id ? null : entry.id,
                           )
                         }
-                        data-ocid="history.toggle_button"
+                        data-ocid="history.toggle"
                       >
                         {expandedId === entry.id ? "Hide" : "Details"}
                       </Button>
@@ -346,7 +369,7 @@ export default function ConsumptionEntryTab() {
                         variant="outline"
                         size="sm"
                         onClick={() => handleExportHistory(entry)}
-                        data-ocid="history.export_button"
+                        data-ocid="history.secondary_button"
                       >
                         <Download className="h-3.5 w-3.5 mr-1" />
                         Excel
@@ -381,6 +404,9 @@ export default function ConsumptionEntryTab() {
                             <TableHead className="text-xs">Qty</TableHead>
                             <TableHead className="text-xs">Unit</TableHead>
                             <TableHead className="text-xs">
+                              Reason Code
+                            </TableHead>
+                            <TableHead className="text-xs">
                               Department
                             </TableHead>
                           </TableRow>
@@ -403,6 +429,24 @@ export default function ConsumptionEntryTab() {
                               </TableCell>
                               <TableCell className="text-sm text-muted-foreground">
                                 {r.unit || "—"}
+                              </TableCell>
+                              <TableCell className="text-sm">
+                                {r.reasonCode ? (
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-xs font-semibold ${
+                                      r.reasonCode === "WASTAGE"
+                                        ? "border-orange-400/50 text-orange-600 bg-orange-50 dark:bg-orange-950/20"
+                                        : "border-blue-400/50 text-blue-600 bg-blue-50 dark:bg-blue-950/20"
+                                    }`}
+                                  >
+                                    {r.reasonCode}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-muted-foreground/40">
+                                    —
+                                  </span>
+                                )}
                               </TableCell>
                               <TableCell>
                                 <Badge
@@ -458,7 +502,7 @@ export default function ConsumptionEntryTab() {
             size="sm"
             onClick={() => setActiveView("history")}
             className="text-muted-foreground"
-            data-ocid="entry.history_button"
+            data-ocid="entry.secondary_button"
           >
             <History className="h-3.5 w-3.5 mr-1.5" />
             History ({entries.length})
@@ -469,7 +513,7 @@ export default function ConsumptionEntryTab() {
             onClick={handleClearAll}
             disabled={filledCount === 0}
             className="text-muted-foreground"
-            data-ocid="entry.clear_button"
+            data-ocid="entry.cancel_button"
           >
             <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
             Clear All
@@ -494,7 +538,7 @@ export default function ConsumptionEntryTab() {
             onClick={handleExport}
             disabled={filledCount === 0}
             className="bg-primary text-primary-foreground"
-            data-ocid="entry.export_button"
+            data-ocid="entry.primary_button"
           >
             <Download className="h-3.5 w-3.5 mr-1.5" />
             Export to Excel
@@ -502,7 +546,7 @@ export default function ConsumptionEntryTab() {
         </div>
       </div>
 
-      {/* Filters: Department + Search */}
+      {/* Filters: Department + Reason Code + Search */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center flex-wrap">
         <Select
           value={deptFilter}
@@ -524,6 +568,20 @@ export default function ConsumptionEntryTab() {
                 {d}
               </SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={reasonFilter} onValueChange={setReasonFilter}>
+          <SelectTrigger
+            className="w-full sm:w-40"
+            data-ocid="entry.reason_filter_select"
+          >
+            <SelectValue placeholder="Reason Code" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All Reasons</SelectItem>
+            <SelectItem value="CONS">CONS</SelectItem>
+            <SelectItem value="WASTAGE">WASTAGE</SelectItem>
           </SelectContent>
         </Select>
 
@@ -578,6 +636,9 @@ export default function ConsumptionEntryTab() {
                 <TableHead className="text-xs font-semibold text-muted-foreground w-20">
                   Unit
                 </TableHead>
+                <TableHead className="text-xs font-semibold text-muted-foreground w-36">
+                  Reason Code
+                </TableHead>
                 <TableHead className="text-xs font-semibold text-muted-foreground min-w-32">
                   Department
                 </TableHead>
@@ -586,21 +647,27 @@ export default function ConsumptionEntryTab() {
             <TableBody>
               {filteredItems.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6}>
+                  <TableCell colSpan={7}>
                     <div
                       data-ocid="entry.empty_state"
                       className="flex flex-col items-center justify-center py-16 text-muted-foreground"
                     >
                       <ClipboardList className="h-10 w-10 mb-3 opacity-30" />
                       <p className="font-medium">
-                        {search || deptFilter !== "ALL"
+                        {search ||
+                        deptFilter !== "ALL" ||
+                        reasonFilter !== "ALL"
                           ? "Koi item nahi mila"
                           : "Koi item nahi hai"}
                       </p>
                       <p className="text-sm mt-1">
-                        {search || deptFilter !== "ALL"
+                        {search ||
+                        deptFilter !== "ALL" ||
+                        reasonFilter !== "ALL"
                           ? "Filter ya search change karein"
-                          : "Pehle Items tab mein items add karein"}
+                          : isAdmin
+                            ? "Pehle Import tab mein items add karein"
+                            : "Items load ho rahe hain -- admin se items add karne ko kahein"}
                       </p>
                     </div>
                   </TableCell>
@@ -613,6 +680,7 @@ export default function ConsumptionEntryTab() {
                     qtyVal !== "" &&
                     !Number.isNaN(Number(qtyVal)) &&
                     Number(qtyVal) > 0;
+                  const rc = reasonCodes[key] ?? "";
 
                   return (
                     <TableRow
@@ -641,7 +709,11 @@ export default function ConsumptionEntryTab() {
                         )}
                       </TableCell>
                       <TableCell
-                        className={`text-sm ${hasQty ? "font-semibold text-foreground" : "font-medium"}`}
+                        className={`text-sm ${
+                          hasQty
+                            ? "font-semibold text-foreground"
+                            : "font-medium"
+                        }`}
                       >
                         {item.name}
                       </TableCell>
@@ -662,6 +734,29 @@ export default function ConsumptionEntryTab() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {item.unit || "—"}
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={rc}
+                          onValueChange={(val) =>
+                            setReasonCodes((prev) => ({
+                              ...prev,
+                              [key]: val,
+                            }))
+                          }
+                        >
+                          <SelectTrigger
+                            className="h-8 w-28 text-xs"
+                            data-ocid={`entry.reason_select.${idx + 1}`}
+                          >
+                            <SelectValue placeholder="Select..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="NONE">—</SelectItem>
+                            <SelectItem value="CONS">CONS</SelectItem>
+                            <SelectItem value="WASTAGE">WASTAGE</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                       <TableCell>
                         <Badge

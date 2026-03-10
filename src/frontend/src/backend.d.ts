@@ -27,11 +27,11 @@ export interface ConsumptionItem {
 }
 export interface SavedRow {
     qty: number;
+    reasonCode: string;
     name: string;
     unit: string;
     itemCode: string;
     department: string;
-    reasonCode: string;
 }
 export interface backendInterface {
     addItem(item: ConsumptionItem): Promise<void>;

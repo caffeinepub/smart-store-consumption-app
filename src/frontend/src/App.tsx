@@ -17,6 +17,7 @@ import {
 import { useState } from "react";
 import ConsumptionEntryTab from "./components/ConsumptionEntryTab";
 import DashboardTab from "./components/DashboardTab";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import ImportTab from "./components/ImportTab";
 import ItemsTab from "./components/ItemsTab";
 import LoginScreen from "./components/LoginScreen";
@@ -165,29 +166,41 @@ function AppContent() {
           {isAdmin && (
             <>
               <TabsContent value="dashboard" className="mt-0">
-                <DashboardTab />
+                <ErrorBoundary>
+                  <DashboardTab />
+                </ErrorBoundary>
               </TabsContent>
 
               <TabsContent value="items" className="mt-0">
-                <ItemsTab />
+                <ErrorBoundary>
+                  <ItemsTab />
+                </ErrorBoundary>
               </TabsContent>
 
               <TabsContent value="import" className="mt-0">
-                <ImportTab />
+                <ErrorBoundary>
+                  <ImportTab />
+                </ErrorBoundary>
               </TabsContent>
 
               <TabsContent value="reports" className="mt-0">
-                <ReportsTab />
+                <ErrorBoundary>
+                  <ReportsTab />
+                </ErrorBoundary>
               </TabsContent>
 
               <TabsContent value="worker-entries" className="mt-0">
-                <WorkerEntriesTab />
+                <ErrorBoundary>
+                  <WorkerEntriesTab />
+                </ErrorBoundary>
               </TabsContent>
             </>
           )}
 
           <TabsContent value="entry" className="mt-0">
-            <ConsumptionEntryTab />
+            <ErrorBoundary>
+              <ConsumptionEntryTab />
+            </ErrorBoundary>
           </TabsContent>
         </Tabs>
       </main>

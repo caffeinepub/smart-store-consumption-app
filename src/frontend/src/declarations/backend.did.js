@@ -20,6 +20,7 @@ export const ConsumptionItem = IDL.Record({
 });
 export const SavedRow = IDL.Record({
   'qty' : IDL.Float64,
+  'reasonCode' : IDL.Text,
   'name' : IDL.Text,
   'unit' : IDL.Text,
   'itemCode' : IDL.Text,
@@ -65,6 +66,7 @@ export const idlService = IDL.Service({
       [IDL.Vec(ConsumptionItem)],
       ['query'],
     ),
+  'updateItem' : IDL.Func([IDL.Text, IDL.Text, ConsumptionItem], [], []),
   'updateItemQuantity' : IDL.Func([IDL.Text, IDL.Text, IDL.Float64], [], []),
 });
 
@@ -83,6 +85,7 @@ export const idlFactory = ({ IDL }) => {
   });
   const SavedRow = IDL.Record({
     'qty' : IDL.Float64,
+    'reasonCode' : IDL.Text,
     'name' : IDL.Text,
     'unit' : IDL.Text,
     'itemCode' : IDL.Text,
@@ -128,6 +131,7 @@ export const idlFactory = ({ IDL }) => {
         [IDL.Vec(ConsumptionItem)],
         ['query'],
       ),
+    'updateItem' : IDL.Func([IDL.Text, IDL.Text, ConsumptionItem], [], []),
     'updateItemQuantity' : IDL.Func([IDL.Text, IDL.Text, IDL.Float64], [], []),
   });
 };
